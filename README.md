@@ -1,23 +1,30 @@
 # 🔐 MD-Vault · 本地单文件 Markdown 加密账号管家
 
+[![Release](https://img.shields.io/github/v/release/ataiben/md-vault?label=Download&color=success)](https://github.com/ataiben/md-vault/releases/latest)
 [![CI](https://github.com/ataiben/md-vault/actions/workflows/ci.yml/badge.svg)](https://github.com/ataiben/md-vault/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)](#快速开始)
 
+> **📦 免安装版直接下载（含独立可执行程序，无需安装 Python）：**
+> - **Windows 10 / 11 (`.exe`)**：[**点击下载 `MD-Vault-Windows-x64.zip`**](https://github.com/ataiben/md-vault/releases/latest/download/MD-Vault-Windows-x64.zip)
+> - **macOS Apple Silicon (`.app`)**：[**点击下载 `MD-Vault-macOS-arm64.zip`**](https://github.com/ataiben/md-vault/releases/latest/download/MD-Vault-macOS-arm64.zip)
+>
+> *(注：请点击上方链接或右侧 **Releases** 下载编译好的程序包；页面右上角绿色的 `Code -> Download ZIP` 下载的是纯 Python 源代码，里面不含 `.exe`。)*
+
 **MD-Vault** 是一款**纯本地、零联网、单文件持久化**的桌面账号与密码管理工具（支持 **Windows** 与 **macOS**）。
 
-它将繁杂的多平台、多地区账号（如美区/国区/土区 Apple ID、主副邮箱、云服务、游戏平台等）归类整理，统一保存在**单个结构清晰、人类可读的 `.md`（Markdown）文件**中：平时既可以用优雅的三栏桌面客户端管理，也可以随时用 **Obsidian / VS Code / 记事本** 直接打开查阅与编辑。
+它将日常分散在各处的网站、工作与个人邮箱、开发与云服务、办公及娱乐平台等账号密码归类整理，统一保存在**单个结构清晰、人类可读的 `.md`（Markdown）文件**中：平时既可以用优雅的三栏桌面客户端管理，也可以随时用 **Obsidian / VS Code / 记事本** 直接打开查阅与编辑。
 
 ---
 
 ## ✨ 核心特性
 
 - **📄 单文件 `.md` 纯本地存储**：所有分类、标签与账号统一保存在单个 Markdown 文件中，无专有黑盒数据库格式，无云端服务器依赖，彻底杜绝格式锁定（Vendor Lock-in）。
-- **🛡 字段级强加密（`AES-256-GCM`）**：分类、标题、地区标签、登录账号保持明文便于检索；**登录密码、密保答案、2FA 恢复码**采用 `PBKDF2-HMAC-SHA256 (600,000 次迭代) + AES-256-GCM` 自动加密为 `ENC[v1:...]`。
+- **🛡 字段级强加密（`AES-256-GCM`）**：分类、标题、用途标签、登录账号保持明文便于检索；**登录密码、密保答案、2FA 恢复码**采用 `PBKDF2-HMAC-SHA256 (600,000 次迭代) + AES-256-GCM` 自动加密为 `ENC[v1:...]`。
 - **🔄 双向无损编辑 + 明文自动上锁**：支持直接用外部 Markdown 编辑器修改或手写新增账号；即使你在外部编辑器直接写了明文密码，下次在客户端解锁或点击同步时，系统也会**自动识别明文并将其加密回写落盘**。
 - **☁️ 天然契合同步盘与笔记库**：支持一键挂载或切换电脑任意路径下的 `.md` 文件（例如直接存放在 **Obsidian 仓库、iCloud Drive、坚果云、OneDrive** 目录中实现多端同步）。
-- **🗂 多地区/多账号友好设计**：内置分类目录、分类专属快捷标签沉淀、苹果密保三问模板、账号一键克隆新建、强随机密码生成器、敏感剪贴板 **30 秒自动清空**。
+- **🗂 多账号高效归档设计**：内置分类目录、分类专属快捷标签沉淀、常用密保问答模板、账号一键克隆新建、强随机密码生成器、敏感剪贴板 **30 秒自动清空**。
 - **⏪ 自动滚动快照防误删**：每次修改落盘采用原子替换（Atomic Write），并在同级 `.vault_backups/` 自动保留最近 5 份历史快照。
 - **🌓 原生轻量桌面体验**：基于 `pywebview` 调用系统原生渲染引擎（Windows Edge WebView2 / macOS WebKit），支持深色与浅色主题切换。
 
@@ -40,24 +47,24 @@ updated_at: '2026-11-11 15:30'
 
 # 我的账号密码库
 
-## 苹果商店与生态
+## 开发与云服务
 
-### Apple Store · 美区主力号
+### GitHub · 个人主力账号
 <!-- id: acc_8f3a19c2 -->
 - **收藏星标**: 是
-- **服务/平台**: Apple ID
-- **分区/标签**: `美区`, `主力`, `免税州`
-- **登录账号**: `us_demo@gmail.com`
+- **服务/平台**: GitHub
+- **分区/标签**: `主力`, `个人`, `开源`
+- **登录账号**: `dev_demo@example.com`
 - **登录密码**: `ENC[v1:r8Pq9L2...:k9Xm2vQ7...]`
-- **辅助邮箱**: `main_mail@gmail.com`
-- **网址/入口**: https://account.apple.com
+- **辅助邮箱**: `backup_mail@example.com`
+- **网址/入口**: https://github.com
 
 #### 密保与恢复信息
-- **密保问题 1**: 你少年时代最好的朋友叫什么名字？ :: `ENC[v1:...]`
+- **密保问题 1**: 第一份工作所在的城市？ :: `ENC[v1:...]`
 - **2FA / 恢复码**: `ENC[v1:...]`
 
 #### 备注说明
-免税州地址：Delaware (DE)，邮编 19702。
+已绑定硬件通行密钥（Passkey）与 TOTP 动态口令，每年定期轮换恢复码。
 ```
 
 ### 字段加密边界一览
@@ -75,15 +82,17 @@ updated_at: '2026-11-11 15:30'
 
 ### 方式一：下载免安装版（推荐普通用户）
 
-前往本仓库的 [**Releases**](https://github.com/ataiben/md-vault/releases) 页面下载对应系统的压缩包：
+无需安装 Python 环境，直接下载对应系统的编译成品压缩包：
 
-- **Windows 10 / 11**：下载 `MD-Vault-Windows-x64.zip`，解压后双击 `MD-Vault.exe` 即可运行（系统自带 Edge WebView2，无需安装 Python）。
-- **macOS (Apple Silicon / Intel)**：下载 `MD-Vault-macOS-*.zip`，解压后将 `MD-Vault.app` 拖入「应用程序」打开。
+- **Windows 10 / 11**：下载 [**`MD-Vault-Windows-x64.zip`**](https://github.com/ataiben/md-vault/releases/latest/download/MD-Vault-Windows-x64.zip)，解压后双击里面的 **`MD-Vault.exe`** 即可运行。
+- **macOS (Apple Silicon)**：下载 [**`MD-Vault-macOS-arm64.zip`**](https://github.com/ataiben/md-vault/releases/latest/download/MD-Vault-macOS-arm64.zip)，解压后将 **`MD-Vault.app`** 拖入「应用程序」打开。
   > *macOS 首次打开提示*：由于开源构建未附加商业 Apple Developer 付费公证签名，首次打开若提示“无法验证开发者”，可在终端执行 `xattr -cr /Applications/MD-Vault.app` 或在「系统设置 → 隐私与安全性」中点击“仍要打开”。
+
+*(历史版本可在 [**Releases 页面**](https://github.com/ataiben/md-vault/releases) 查看，请注意选择带有 `Windows` 或 `macOS` 字样的安装包，而非底部的 `Source code`。)*
 
 ---
 
-### 方式二：从源码运行（Windows & macOS）
+### 方式二：从源码运行（面向开发者）
 
 环境要求：**Python 3.9+**
 
@@ -111,8 +120,8 @@ python3 -m venv .venv
   ```bash
   python app.py
   ```
-- **桌面双击静默启动（无终端黑框）**：
-  - **Windows**：双击目录中的 `run_vault.vbs` 或 `启动账号管家.bat`（支持右键发送到桌面快捷方式，自动识别 `.venv` 虚拟环境）。
+- **源码目录双击静默启动（需本地已装 Python 与依赖）**：
+  - **Windows**：双击目录中的 `run_vault.vbs` 或 `启动账号管家.bat`（自动识别 `.venv` 虚拟环境）。
   - **macOS**：在 Finder 中双击 `run_macos.command`。
 
 ---
