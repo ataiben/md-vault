@@ -264,7 +264,7 @@
       scopedEntries = state.entries.filter((e) => e.favorite);
       if (tagsTitleEl) tagsTitleEl.textContent = "星标账号标签";
     } else {
-      if (tagsTitleEl) tagsTitleEl.textContent = "地区 / 用途标签";
+      if (tagsTitleEl) tagsTitleEl.textContent = "快捷筛选标签";
     }
 
     const scopedTagCounts = {};
@@ -641,7 +641,7 @@
   function populateCategorySelect(selectedCat) {
     const sel = $("field-category");
     sel.innerHTML = "";
-    const cats = state.categories.length ? [...state.categories] : ["苹果商店与生态", "邮箱账号", "未分类"];
+    const cats = state.categories.length ? [...state.categories] : ["开发与云服务", "工作与个人邮箱", "未分类"];
     if (selectedCat && !cats.includes(selectedCat)) cats.push(selectedCat);
     cats.forEach((c) => {
       const opt = document.createElement("option");
@@ -757,7 +757,7 @@
       ? entry.category
       : state.filterType === "category" && state.filterCategory
       ? state.filterCategory
-      : state.categories[0] || "苹果商店与生态";
+      : state.categories[0] || "开发与云服务";
 
     populateCategorySelect(defaultCat);
     $("field-platform").value = hasSource ? entry.platform || "" : "";
@@ -1383,7 +1383,7 @@
     if ($("btn-new-entry")) $("btn-new-entry").title = "快捷键 ⌘N";
     if ($("btn-lock-vault")) $("btn-lock-vault").title = "立即锁定密码库 (⌘L)";
     if ($("search-input")) {
-      $("search-input").placeholder = "搜索标题、账号、美区/土区、手机、备注... (⌘F)";
+      $("search-input").placeholder = "搜索标题、账号、平台、标签、手机、备注... (⌘F)";
     }
   }
 

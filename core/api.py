@@ -37,63 +37,32 @@ from core.storage import VaultStorage
 
 
 def _build_starter_entries(crypto: CryptoEngine) -> tuple[List[str], List[AccountEntry]]:
-    """Build helpful categorized starter templates for Apple ID regions & emails."""
+    """Build helpful categorized starter templates for common account types."""
     categories = [
-        "苹果商店与生态",
-        "邮箱账号",
         "开发与云服务",
+        "工作与个人邮箱",
+        "常用软件与网站",
         "社交与娱乐",
     ]
     raw_entries = [
         AccountEntry(
-            category="苹果商店与生态",
-            title="Apple Store · 美区主力号（示例）",
-            platform="Apple ID",
-            tags=["美区", "主力", "免税州"],
+            category="开发与云服务",
+            title="GitHub · 个人主力账号（示例）",
+            platform="GitHub",
+            tags=["主力", "个人", "开源"],
             favorite=True,
-            username="us_apple_demo@gmail.com",
-            password="Demo#US_Apple_2026!",
-            phone="+1 (302) 555-0199",
-            recovery_email="my_main_mail@gmail.com",
-            url="https://account.apple.com",
-            security_questions=[
-                SecurityQA(question="你少年时代最好的朋友叫什么名字？", answer="Alex"),
-                SecurityQA(question="你的第一份工作是在哪个城市？", answer="Seattle"),
-                SecurityQA(question="你理想的工作是什么？", answer="Architect"),
-            ],
+            username="dev_demo@example.com",
+            password="Demo#GitHub_2026!",
+            recovery_email="backup_mail@example.com",
+            url="https://github.com",
             two_fa_recovery="RK9X-72LM-99PA-44QW",
-            notes="免税州地址：Delaware (DE)，邮编 19702。\n可直接编辑此示例为您真实的美区账号，或删除此示例。",
+            notes="已开启两步验证与通行密钥（Passkey）。\n可直接编辑此示例为您真实的账号，或删除此示例。",
         ),
         AccountEntry(
-            category="苹果商店与生态",
-            title="Apple Store · 国区日常号（示例）",
-            platform="Apple ID",
-            tags=["国区", "日常", "iCloud"],
-            favorite=False,
-            username="cn_apple_demo@icloud.com",
-            password="Demo#CN_Apple_2026!",
-            phone="+86 138-0000-0000",
-            recovery_email="backup_cn@qq.com",
-            url="https://account.apple.com",
-            notes="绑定国内常用支付方式，用于日常国区 App 下载与家庭共享。",
-        ),
-        AccountEntry(
-            category="苹果商店与生态",
-            title="Apple Store · 土耳其区订阅号（示例）",
-            platform="Apple ID",
-            tags=["土耳其区", "低价订阅"],
-            favorite=False,
-            username="tr_apple_demo@outlook.com",
-            password="Demo#TR_Apple_2026!",
-            recovery_email="us_apple_demo@gmail.com",
-            url="https://account.apple.com",
-            notes="专用于高性价比订阅服务，平时通过土区礼品卡充值。",
-        ),
-        AccountEntry(
-            category="邮箱账号",
+            category="工作与个人邮箱",
             title="Gmail · 个人核心主邮箱（示例）",
             platform="Google / Gmail",
-            tags=["主力", "海外服务绑定"],
+            tags=["主力", "重要绑定"],
             favorite=True,
             username="my_main_mail@gmail.com",
             password="Demo#Gmail_Master_88!",
@@ -101,7 +70,36 @@ def _build_starter_entries(crypto: CryptoEngine) -> tuple[List[str], List[Accoun
             recovery_email="backup_mail@outlook.com",
             url="https://mail.google.com",
             two_fa_recovery="1928 3746 / 5647 3829 / 9182 7364",
-            notes="核心绑定邮箱，已开启 Google Authenticator 两步验证。",
+            notes="核心绑定邮箱，已开启 Authenticator 动态口令验证。",
+        ),
+        AccountEntry(
+            category="开发与云服务",
+            title="云服务 · 控制台管理号（示例）",
+            platform="Cloud Console",
+            tags=["工作", "运维"],
+            favorite=False,
+            username="ops_admin@example.com",
+            password="Demo#Cloud_Ops_2026!",
+            phone="+86 139-0000-0000",
+            url="https://console.example.com",
+            security_questions=[
+                SecurityQA(question="你少年时代最好的朋友叫什么名字？", answer="Alex"),
+                SecurityQA(question="你的第一份工作是在哪个城市？", answer="Shenzhen"),
+                SecurityQA(question="你理想的工作是什么？", answer="Architect"),
+            ],
+            notes="用于日常云服务器与域名解析维护。",
+        ),
+        AccountEntry(
+            category="社交与娱乐",
+            title="Steam · 游戏娱乐账号（示例）",
+            platform="Steam",
+            tags=["个人", "娱乐"],
+            favorite=False,
+            username="player_demo",
+            password="Demo#Steam_Play_2026!",
+            recovery_email="my_main_mail@gmail.com",
+            url="https://store.steampowered.com",
+            notes="已绑定手机令牌 Steam Guard。",
         ),
     ]
     encrypted_entries = [encrypt_entry_for_storage(e, crypto) for e in raw_entries]
@@ -230,7 +228,7 @@ class VaultApi:
             if use_starter_template:
                 categories, entries = _build_starter_entries(engine)
             else:
-                categories = ["苹果商店与生态", "邮箱账号", "常用软件"]
+                categories = ["开发与云服务", "工作与个人邮箱", "常用软件与网站"]
                 entries = []
 
             doc = VaultDocument(
@@ -357,7 +355,7 @@ class VaultApi:
 
             title = str(payload.get("title", "")).strip()
             if not title:
-                return {"ok": False, "error": "请填写账号条目名称（例如：Apple Store · 美区主力号）"}
+                return {"ok": False, "error": "请填写账号条目名称（例如：GitHub · 个人主力账号）"}
 
             category = str(payload.get("category", "")).strip() or "未分类"
             entry_id = str(payload.get("id", "")).strip()

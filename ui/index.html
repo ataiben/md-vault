@@ -82,7 +82,7 @@
         </div>
         <label class="checkbox-row">
           <input type="checkbox" id="create-use-template" checked />
-          <span>生成示例分类与多地区模板（含苹果美区/国区/土区、主邮箱示例，可随时改删）</span>
+          <span>生成示例分类与演示模板（含开发云服务、主邮箱、娱乐平台等示例，可随时改删）</span>
         </label>
         <div id="create-error" class="form-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-block" id="btn-create-submit">创建并进入密码库</button>
@@ -161,7 +161,7 @@
 
         <div class="nav-section tags-section">
           <div class="nav-section-header">
-            <span class="nav-section-title" id="sidebar-tags-title">地区 / 用途标签</span>
+            <span class="nav-section-title" id="sidebar-tags-title">快捷筛选标签</span>
             <button type="button" class="mini-action-btn hidden" id="btn-clear-tag">清除</button>
           </div>
           <div class="tag-cloud" id="sidebar-tag-cloud"></div>
@@ -176,7 +176,7 @@
             <input
               type="text"
               id="search-input"
-              placeholder="搜索标题、账号、美区/土区、手机、备注... (Ctrl+F)"
+              placeholder="搜索标题、账号、平台、标签、手机、备注... (Ctrl+F)"
               autocomplete="off"
             />
             <button type="button" id="btn-clear-search" class="clear-search-btn hidden" title="清空搜索">×</button>
@@ -196,7 +196,7 @@
         <div id="detail-empty" class="detail-empty">
           <div class="empty-illustration">🔐</div>
           <h3>选择左侧账号查看详情，或新建一条记录</h3>
-          <p>支持按平台/地区分类归档，密码与密保自动使用 AES-256-GCM 加密写入本地 Markdown 文件。</p>
+          <p>支持按平台与标签多维归档，密码与密保自动使用 AES-256-GCM 加密写入本地 Markdown 文件。</p>
           <button type="button" class="btn btn-primary" id="btn-empty-new">+ 新建第一个账号</button>
         </div>
 
@@ -228,18 +228,18 @@
               </div>
               <div class="form-group">
                 <label for="field-platform">服务 / 软件平台</label>
-                <input type="text" id="field-platform" placeholder="如：Apple ID / Gmail / Outlook / Steam" />
+                <input type="text" id="field-platform" placeholder="如：GitHub / Gmail / Outlook / Steam / 微信" />
               </div>
             </div>
 
             <div class="form-group">
               <label for="field-title">条目显示名称 *</label>
-              <input type="text" id="field-title" placeholder="如：Apple Store · 美区主力号 / Gmail · 工作主邮箱" required />
+              <input type="text" id="field-title" placeholder="如：GitHub · 个人主力账号 / Gmail · 工作主邮箱" required />
             </div>
 
             <div class="form-group">
-              <label for="field-tags">地区 / 用途标签（逗号分隔，保存或按回车后自动加入当前分类快捷标签）</label>
-              <input type="text" id="field-tags" placeholder="输入标签，例如：美区, 主力（按 Enter 可立即沉淀为下方快捷标签）" />
+              <label for="field-tags">用途 / 属性标签（逗号分隔，保存或按回车后自动加入当前分类快捷标签）</label>
+              <input type="text" id="field-tags" placeholder="输入标签，例如：主力, 工作, 个人（按 Enter 可立即沉淀为下方快捷标签）" />
               <div class="preset-tags-bar" id="preset-tags-bar"></div>
             </div>
 
@@ -292,7 +292,7 @@
             <div class="form-section-divider">
               <span>密保问答与 2FA 恢复码（答案与恢复码落盘自动加密）</span>
               <div class="divider-actions">
-                <button type="button" class="link-btn" id="btn-fill-apple-qa">填入苹果密保三问模板</button>
+                <button type="button" class="link-btn" id="btn-fill-apple-qa">填入常用密保三问模板</button>
                 <span class="dot-sep">·</span>
                 <button type="button" class="link-btn" id="btn-add-qa-row">+ 添加密保问题</button>
               </div>
@@ -302,11 +302,11 @@
 
             <div class="form-group">
               <label for="field-2fa">2FA 密钥 / 备用恢复码（支持多行，加密存储）</label>
-              <textarea id="field-2fa" rows="2" placeholder="如：Apple 双重认证恢复密钥、Google 备用验证码或 TOTP 密钥种子..."></textarea>
+              <textarea id="field-2fa" rows="2" placeholder="如：双重认证恢复密钥、平台备用验证码或 TOTP 密钥种子..."></textarea>
             </div>
 
             <div class="form-group">
-              <label for="field-notes">备注说明（明文 Markdown，可记录账单地址、续费日期、礼品卡渠道等）</label>
+              <label for="field-notes">备注说明（明文 Markdown，可记录绑定信息、续费日期、使用说明等）</label>
               <textarea id="field-notes" rows="4" placeholder="自由填写备注信息..."></textarea>
             </div>
           </div>
