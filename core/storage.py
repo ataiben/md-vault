@@ -29,25 +29,42 @@ class VaultStorage:
         if self._vault_path.exists():
             self._last_written_hash = self._compute_file_hash(self._vault_path)
 
-    def _load_saved_vault_path(self) -> Path:
+    def _read_prefs(self) -> dict:
         if self._prefs_path.exists():
             try:
                 data = json.loads(self._prefs_path.read_text(encoding="utf-8"))
-                saved = data.get("vault_path", "")
-                if saved:
-                    return Path(saved)
+                if isinstance(data, dict):
+                    return data
             except Exception:
                 pass
-        return self._default_vault_path
+        return {}
 
-    def _save_vault_path_pref(self) -> None:
+    def _write_prefs(self, updates: dict) -> None:
         try:
+            merged = self._read_prefs()
+            merged.update(updates)
             self._prefs_path.write_text(
-                json.dumps({"vault_path": str(self._vault_path)}, ensure_ascii=False, indent=2),
+                json.dumps(merged, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
         except Exception:
             pass
+
+    def _load_saved_vault_path(self) -> Path:
+        saved = self._read_prefs().get("vault_path", "")
+        if saved:
+            return Path(saved)
+        return self._default_vault_path
+
+    def _save_vault_path_pref(self) -> None:
+        self._write_prefs({"vault_path": str(self._vault_path)})
+
+    @property
+    def auto_check_updates(self) -> bool:
+        return bool(self._read_prefs().get("auto_check_updates", True))
+
+    def set_auto_check_updates(self, enabled: bool) -> None:
+        self._write_prefs({"auto_check_updates": bool(enabled)})
 
     @property
     def vault_path(self) -> Path:

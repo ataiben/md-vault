@@ -87,6 +87,9 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Generate SHA-256 checksums
+        run: sha256sum MD-Vault-Windows-x64.zip MD-Vault-macOS-arm64.zip > SHA256SUMS.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -94,3 +97,4 @@ jobs:
           files: |
             MD-Vault-Windows-x64.zip
             MD-Vault-macOS-arm64.zip
+            SHA256SUMS.txt

@@ -269,6 +269,76 @@ textarea {
   margin-bottom: 20px;
 }
 
+.auth-brand-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.version-pill {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  border-radius: 99px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.version-pill:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.version-pill.has-update,
+.btn.has-update {
+  background: rgba(34, 197, 94, 0.16);
+  border-color: var(--success);
+  color: var(--success);
+}
+.version-pill.has-update:hover,
+.btn.has-update:hover {
+  background: var(--success);
+  color: #fff;
+}
+
+.update-notes-box {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  margin: 10px 0 14px;
+}
+
+.update-progress-wrap {
+  margin-top: 12px;
+}
+.update-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--success));
+  transition: width 0.2s ease;
+}
+.update-progress-text {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .brand-logo {
   width: 48px;
   height: 48px;

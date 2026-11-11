@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -34,6 +35,8 @@ from core.models import (
 )
 from core.password_gen import generate_password
 from core.storage import VaultStorage
+from core.updater import apply_update_and_prepare_restart, check_for_updates
+from core.version import __version__
 
 
 def _build_starter_entries(crypto: CryptoEngine) -> tuple[List[str], List[AccountEntry]]:
@@ -116,6 +119,7 @@ class VaultApi:
         self._doc: Optional[VaultDocument] = None
         self._window: Any = None
         self._clipboard_timer: Optional[threading.Timer] = None
+        self._latest_update_info: Optional[Dict[str, Any]] = None
         self._lock = threading.RLock()
 
         self._storage.start_watching(self._notify_frontend_external_change)
@@ -179,6 +183,8 @@ class VaultApi:
         return {
             "ok": True,
             "is_unlocked": True,
+            "app_version": __version__,
+            "auto_check_updates": self._storage.auto_check_updates,
             "vault_path": str(self._storage.vault_path),
             "vault_name": self._doc.header.vault_name,
             "updated_at": self._doc.header.updated_at,
@@ -205,6 +211,8 @@ class VaultApi:
                 "ok": True,
                 "exists": exists,
                 "is_unlocked": bool(self._crypto and self._crypto.is_unlocked),
+                "app_version": __version__,
+                "auto_check_updates": self._storage.auto_check_updates,
                 "vault_path": str(self._storage.vault_path),
                 "vault_name": vault_name,
                 "external_changed": self._storage.external_changed,
@@ -889,3 +897,70 @@ class VaultApi:
             return {"ok": True, "url": raw}
         except Exception as exc:
             return {"ok": False, "error": f"打开浏览器失败: {exc}"}
+
+    def set_auto_check_updates(self, enabled: bool) -> Dict[str, Any]:
+        """Enable or disable automatic GitHub Release update check on startup."""
+        with self._lock:
+            self._storage.set_auto_check_updates(bool(enabled))
+            return {"ok": True, "auto_check_updates": self._storage.auto_check_updates}
+
+    def check_app_update(self) -> Dict[str, Any]:
+        """Check GitHub Releases for a newer version of MD-Vault."""
+        res = check_for_updates(self._project_root, current_version=__version__)
+        with self._lock:
+            if res.get("ok"):
+                self._latest_update_info = dict(res)
+            res["auto_check_updates"] = self._storage.auto_check_updates
+        return res
+
+    def install_app_update(self) -> Dict[str, Any]:
+        """Download, verify SHA-256, stage update, and restart into the new version."""
+        with self._lock:
+            info = self._latest_update_info
+
+        if not info or not info.get("has_update"):
+            info = check_for_updates(self._project_root, current_version=__version__)
+            if not info.get("ok"):
+                return info
+            with self._lock:
+                self._latest_update_info = dict(info)
+
+        def _emit_progress(message: str, percent: int) -> None:
+            if self._window is not None:
+                payload_json = json.dumps(
+                    {"message": message, "percent": int(percent)}, ensure_ascii=False
+                )
+                try:
+                    self._window.evaluate_js(
+                        f"window.onUpdateProgress && window.onUpdateProgress({payload_json});"
+                    )
+                except Exception:
+                    pass
+
+        res = apply_update_and_prepare_restart(
+            self._project_root,
+            info,
+            progress_cb=_emit_progress,
+        )
+        if res.get("ok") and res.get("restart"):
+            with self._lock:
+                if self._crypto is not None:
+                    self._crypto.lock()
+                    self._crypto = None
+                self._doc = None
+                self._storage.stop_watching()
+
+            def _close_for_restart() -> None:
+                if self._window is not None:
+                    try:
+                        self._window.destroy()
+                        return
+                    except Exception:
+                        pass
+                os._exit(0)
+
+            t = threading.Timer(0.35, _close_for_restart)
+            t.daemon = True
+            t.start()
+
+        return res

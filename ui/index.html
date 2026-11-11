@@ -18,10 +18,11 @@
         <div class="brand-logo">
           <img src="assets/icon.png" alt="MD-Vault" />
         </div>
-        <div>
+        <div class="auth-brand-text">
           <h1 class="auth-title">MD-Vault</h1>
           <p class="auth-subtitle">本地单文件 Markdown 加密账号管家</p>
         </div>
+        <button type="button" class="version-pill" id="btn-auth-update" title="点击检查软件更新">v0.2.0</button>
       </div>
 
       <!-- Current .md File Path Bar -->
@@ -121,6 +122,9 @@
         </button>
         <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-theme" title="切换深色/浅色外观">
           🌗 外观
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-check-update" title="当前版本 · 点击检查软件更新">
+          <span id="topbar-update-label">🔄 更新</span>
         </button>
         <button type="button" class="btn btn-danger-ghost btn-sm" id="btn-lock-vault" title="立即锁定密码库 (Ctrl+L)">
           🔒 锁定

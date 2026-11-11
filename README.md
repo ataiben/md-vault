@@ -6,7 +6,7 @@
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)](#快速开始)
 
-**MD-Vault** 是一款**纯本地、零联网、单文件持久化**的桌面账号与密码管理工具（支持 **Windows** 与 **macOS**）。
+**MD-Vault** 是一款**纯本地存储、无云端后端、单文件持久化**的桌面账号与密码管理工具（支持 **Windows** 与 **macOS**）。
 
 它将日常分散在各处的网站、工作与个人邮箱、开发与云服务、办公及娱乐平台等账号密码归类整理，统一保存在**单个结构清晰、人类可读的 `.md`（Markdown）文件**中：平时既可以用优雅的三栏桌面客户端管理，也可以随时用 **Obsidian / VS Code / 记事本** 直接打开查阅与编辑。
 
@@ -20,6 +20,7 @@
 - **☁️ 天然契合同步盘与笔记库**：支持一键挂载或切换电脑任意路径下的 `.md` 文件（例如直接存放在 **Obsidian 仓库、iCloud Drive、坚果云、OneDrive** 目录中实现多端同步）。
 - **🗂 多账号高效归档设计**：内置分类目录、分类专属快捷标签沉淀、常用密保问答模板、账号一键克隆新建、强随机密码生成器、敏感剪贴板 **30 秒自动清空**。
 - **⏪ 自动滚动快照防误删**：每次修改落盘采用原子替换（Atomic Write），并在同级 `.vault_backups/` 自动保留最近 5 份历史快照。
+- **🔄 内置一键在线更新（含 SHA-256 校验）**：支持连接 GitHub Releases 检测新版本，一键下载、校验安装包完整性并在本地自动替换重启升级（支持随时关闭启动自动检查）。
 - **🌓 原生轻量桌面体验**：基于 `pywebview` 调用系统原生渲染引擎（Windows Edge WebView2 / macOS WebKit），支持深色与浅色主题切换。
 
 ---

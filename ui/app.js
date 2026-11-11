@@ -17,6 +17,10 @@
     selectedId: null,
     mode: "view", // "view" | "edit"
     revealedFields: new Set(),
+    appVersion: "0.2.0",
+    autoCheckUpdates: true,
+    updateInfo: null,
+    startupUpdateChecked: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -98,19 +102,80 @@
   }
 
   // ==================== BOOT & AUTH ====================
+  function renderUpdateIndicators() {
+    const verText = `v${state.appVersion || "0.2.0"}`;
+    const authBtn = $("btn-auth-update");
+    const topBtn = $("btn-check-update");
+    const topLabel = $("topbar-update-label");
+    const hasUpd = Boolean(state.updateInfo && state.updateInfo.has_update);
+
+    if (authBtn) {
+      authBtn.classList.toggle("has-update", hasUpd);
+      authBtn.textContent = hasUpd
+        ? `⬆ 新版 v${state.updateInfo.latest_version}`
+        : verText;
+      authBtn.title = hasUpd
+        ? `发现新版本 v${state.updateInfo.latest_version}，点击一键更新`
+        : `当前版本 ${verText} · 点击检查软件更新`;
+    }
+
+    if (topBtn && topLabel) {
+      topBtn.classList.toggle("has-update", hasUpd);
+      topLabel.textContent = hasUpd
+        ? `⬆ 新版 v${state.updateInfo.latest_version}`
+        : `🔄 ${verText}`;
+      topBtn.title = hasUpd
+        ? `发现新版本 v${state.updateInfo.latest_version}，点击一键更新`
+        : `当前版本 ${verText} · 点击检查软件更新`;
+    }
+  }
+
+  async function runSilentStartupUpdateCheck() {
+    if (state.startupUpdateChecked || !state.autoCheckUpdates) return;
+    state.startupUpdateChecked = true;
+    try {
+      const res = await api().check_app_update();
+      if (res && res.ok) {
+        state.updateInfo = res;
+        renderUpdateIndicators();
+        if (res.has_update) {
+          showToast(
+            `发现新版本 v${res.latest_version}，点击顶栏绿色按钮即可一键更新`,
+            "success"
+          );
+        }
+      }
+    } catch (_) {
+      // Silent background check: ignore offline errors
+    }
+  }
+
   async function refreshBootStatus() {
     try {
       const status = await api().get_status();
+      if (status.app_version) state.appVersion = status.app_version;
+      if (typeof status.auto_check_updates === "boolean") {
+        state.autoCheckUpdates = status.auto_check_updates;
+      }
       renderAuthStatus(status);
+      renderUpdateIndicators();
+      if (state.autoCheckUpdates && !state.startupUpdateChecked) {
+        setTimeout(runSilentStartupUpdateCheck, 1200);
+      }
     } catch (err) {
       showToast("初始化状态读取失败: " + err.message, "error");
     }
   }
 
   function renderAuthStatus(status) {
+    if (status.app_version) state.appVersion = status.app_version;
+    if (typeof status.auto_check_updates === "boolean") {
+      state.autoCheckUpdates = status.auto_check_updates;
+    }
     state.vaultPath = status.vault_path || "";
     state.vaultName = status.vault_name || "我的账号密码库";
     $("auth-vault-path").textContent = state.vaultPath;
+    renderUpdateIndicators();
 
     $("auth-screen").classList.remove("hidden");
     $("app-workspace").classList.add("hidden");
@@ -133,12 +198,17 @@
   }
 
   function applyUnlockedState(res, preferredId = null) {
+    if (res.app_version) state.appVersion = res.app_version;
+    if (typeof res.auto_check_updates === "boolean") {
+      state.autoCheckUpdates = res.auto_check_updates;
+    }
     state.vaultName = res.vault_name || "我的账号密码库";
     state.vaultPath = res.vault_path || "";
     state.categories = res.categories || [];
     state.entries = res.entries || [];
     state.tagCounts = res.tag_counts || {};
     state.savedTags = res.saved_tags || {};
+    renderUpdateIndicators();
 
     $("auth-screen").classList.add("hidden");
     $("app-workspace").classList.remove("hidden");
@@ -1095,6 +1165,192 @@
     });
   }
 
+  async function openUpdateModal(forceCheck = false) {
+    openModal({
+      title: "🔄 软件版本与自动更新",
+      bodyHtml: `
+        <p style="font-size:13px;color:var(--text-secondary)">
+          当前本地版本：<code>v${escapeHtml(state.appVersion)}</code><br/>
+          <span style="color:var(--text-muted)">正在连接 GitHub Releases 检查最新版本...</span>
+        </p>
+      `,
+      footerButtons: [{ label: "关闭", className: "btn-ghost", onClick: closeModal }],
+    });
+
+    let info = !forceCheck && state.updateInfo && state.updateInfo.ok ? state.updateInfo : null;
+    if (!info) {
+      info = await api().check_app_update();
+      if (info && info.ok) {
+        state.updateInfo = info;
+        if (typeof info.auto_check_updates === "boolean") {
+          state.autoCheckUpdates = info.auto_check_updates;
+        }
+        renderUpdateIndicators();
+      }
+    }
+
+    // Abort if modal was closed while waiting for network
+    if ($("modal-overlay").classList.contains("hidden")) return;
+
+    const autoChkHtml = `
+      <label class="checkbox-row" style="margin-top:12px;margin-bottom:0">
+        <input type="checkbox" id="chk-auto-update-pref" ${state.autoCheckUpdates ? "checked" : ""} />
+        <span>启动软件时在后台自动检查新版本（仅向 GitHub 发起只读查询，不上传任何本地数据）</span>
+      </label>
+    `;
+
+    function bindAutoUpdateToggle() {
+      const chk = $("chk-auto-update-pref");
+      if (chk) {
+        chk.addEventListener("change", async () => {
+          state.autoCheckUpdates = chk.checked;
+          await api().set_auto_check_updates(chk.checked);
+          showToast(
+            chk.checked ? "已开启启动自动检查更新" : "已关闭启动自动检查更新",
+            "info"
+          );
+        });
+      }
+    }
+
+    if (!info || !info.ok) {
+      openModal({
+        title: "🔄 软件版本与自动更新",
+        bodyHtml: `
+          <p style="font-size:13px;line-height:1.6">
+            当前本地版本：<code>v${escapeHtml(state.appVersion)}</code>
+          </p>
+          <div class="form-error" style="margin-top:10px">
+            ${escapeHtml((info && info.error) || "检查更新失败，请检查网络连接")}
+          </div>
+          ${autoChkHtml}
+        `,
+        footerButtons: [
+          { label: "关闭", className: "btn-ghost", onClick: closeModal },
+          {
+            label: "重试检查",
+            className: "btn-ghost",
+            onClick: () => openUpdateModal(true),
+          },
+          {
+            label: "前往 GitHub Releases",
+            className: "btn-primary",
+            onClick: () => api().open_external_url("https://github.com/ataiben/md-vault/releases"),
+          },
+        ],
+      });
+      bindAutoUpdateToggle();
+      return;
+    }
+
+    if (!info.has_update) {
+      openModal({
+        title: "✅ 当前已是最新版本",
+        bodyHtml: `
+          <p style="font-size:13.5px;line-height:1.7;color:var(--text-primary)">
+            当前运行版本 <code>v${escapeHtml(info.current_version)}</code> 已是最新发布版本（远端最新：<code>${escapeHtml(info.tag_name)}</code>）。
+          </p>
+          ${autoChkHtml}
+        `,
+        footerButtons: [
+          { label: "关闭", className: "btn-ghost", onClick: closeModal },
+          {
+            label: "重新检查",
+            className: "btn-ghost",
+            onClick: () => openUpdateModal(true),
+          },
+          {
+            label: "查看历史版本",
+            className: "btn-primary",
+            onClick: () => api().open_external_url(info.release_url),
+          },
+        ],
+      });
+      bindAutoUpdateToggle();
+      return;
+    }
+
+    const modeHint =
+      info.install_mode === "git_source"
+        ? "检测到当前为 Git 源码运行模式，点击下方按钮将自动执行 <code>git pull</code> 拉取最新代码并重启应用（您的本地密码库不受影响）。"
+        : info.can_self_update
+        ? "点击「一键下载并重启更新」将自动下载新版安装包、校验 SHA-256 完整性、替换本地程序并自动重启（您的本地 <code>.md</code> 密码库数据完全保留）。"
+        : "当前运行环境请点击下方按钮前往 GitHub 下载最新安装包。";
+
+    const notesText = info.release_notes || "包含功能体验优化与问题修复。";
+
+    const buttons = [
+      { label: "稍后再说", className: "btn-ghost", onClick: closeModal },
+      {
+        label: "浏览器打开下载页",
+        className: "btn-ghost",
+        onClick: () => api().open_external_url(info.release_url),
+      },
+    ];
+
+    if (info.can_self_update) {
+      buttons.push({
+        label: "🚀 一键下载并重启更新",
+        className: "btn-primary",
+        onClick: async () => {
+          const progWrap = $("update-progress-wrap");
+          const progFill = $("update-progress-fill");
+          const progText = $("update-progress-text");
+          if (progWrap) progWrap.classList.remove("hidden");
+          if (progFill) progFill.style.width = "5%";
+          if (progText) progText.textContent = "正在准备下载更新...";
+
+          document.querySelectorAll("#modal-footer button").forEach((b) => {
+            b.disabled = true;
+          });
+
+          const res = await api().install_app_update();
+          if (!res || !res.ok) {
+            document.querySelectorAll("#modal-footer button").forEach((b) => {
+              b.disabled = false;
+            });
+            showToast((res && res.error) || "自动更新失败，可尝试浏览器手动下载", "error");
+            if (progText) {
+              progText.textContent = (res && res.error) || "更新失败";
+              progText.style.color = "var(--danger)";
+            }
+            return;
+          }
+          if (progFill) progFill.style.width = "100%";
+          if (progText) progText.textContent = "更新已就绪，正在自动重启进入新版本...";
+          showToast("更新完成，正在自动重启应用...", "success");
+        },
+      });
+    } else {
+      buttons.push({
+        label: "🌐 前往下载新版",
+        className: "btn-primary",
+        onClick: () => api().open_external_url(info.release_url),
+      });
+    }
+
+    openModal({
+      title: `🎉 发现新版本 v${info.latest_version}`,
+      bodyHtml: `
+        <p style="font-size:13px;line-height:1.6">
+          本地版本：<code>v${escapeHtml(info.current_version)}</code> &nbsp;→&nbsp;
+          最新版本：<strong style="color:var(--success)">v${escapeHtml(info.latest_version)}</strong>
+        </p>
+        <div class="update-notes-box selectable">${escapeHtml(notesText)}</div>
+        <p style="font-size:12px;color:var(--text-secondary);line-height:1.55">${modeHint}</p>
+        <div id="update-progress-wrap" class="update-progress-wrap hidden">
+          <div class="update-progress-bar">
+            <div id="update-progress-fill" class="update-progress-fill"></div>
+          </div>
+          <div id="update-progress-text" class="update-progress-text">准备中...</div>
+        </div>
+        ${autoChkHtml}
+      `,
+      footerButtons: buttons,
+    });
+    bindAutoUpdateToggle();
+  }
+
   // ==================== EVENT BINDINGS ====================
   function bindEvents() {
     // Show/hide password buttons on static forms
@@ -1207,6 +1463,13 @@
       html.setAttribute("data-theme", next);
       localStorage.setItem("md_vault_theme", next);
     });
+
+    if ($("btn-check-update")) {
+      $("btn-check-update").addEventListener("click", () => openUpdateModal(false));
+    }
+    if ($("btn-auth-update")) {
+      $("btn-auth-update").addEventListener("click", () => openUpdateModal(false));
+    }
 
     $("btn-lock-vault").addEventListener("click", async () => {
       const status = await api().lock_vault();
@@ -1370,6 +1633,19 @@
     const syncBtn = $("btn-sync-external");
     if (syncBtn) syncBtn.classList.remove("hidden");
     showToast("检测到外部编辑器更新了 .md 文件，可点击顶部黄色按钮同步", "info");
+  };
+
+  // Live download progress hook invoked from Python Auto-Updater
+  window.onUpdateProgress = function (payload) {
+    if (!payload) return;
+    const fill = $("update-progress-fill");
+    const txt = $("update-progress-text");
+    if (fill && typeof payload.percent === "number") {
+      fill.style.width = `${Math.max(0, Math.min(100, payload.percent))}%`;
+    }
+    if (txt && payload.message) {
+      txt.textContent = payload.message;
+    }
   };
 
   // Restore theme & adapt macOS shortcut hints & boot

@@ -2,7 +2,7 @@
 
 ## 加密架构
 
-**MD-Vault** 采用纯本地零网络请求的字段级加密方案（依赖 Python 标准密码学库 [`cryptography`](https://cryptography.io/)）：
+**MD-Vault** 采用纯本地无云端后端的字段级加密方案（依赖 Python 标准密码学库 [`cryptography`](https://cryptography.io/)；除连接 GitHub Releases 只读查询版本更新外无任何网络通信，且可在界面中随时关闭自动检查更新）：
 
 - **密钥派生 (KDF)**：`PBKDF2-HMAC-SHA256`，默认 `600,000` 次迭代，每个密码库初始化或修改主密码时使用 `os.urandom(16)` 生成独立的 128-bit 随机盐值（`salt`）。
 - **对称认证加密 (AEAD)**：`AES-256-GCM`，每次字段加密均使用 `os.urandom(12)` 生成全新的 96-bit 随机 Nonce，密文格式为 `ENC[v1:<urlsafe_b64_nonce>:<urlsafe_b64_ciphertext_and_tag>]`。
