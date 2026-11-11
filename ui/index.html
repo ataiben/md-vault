@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MD-Vault · 本地账号密码管家</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- ==================== AUTH / ONBOARDING VIEW ==================== -->
+  <section id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+        </div>
+        <div>
+          <h1 class="auth-title">MD-Vault</h1>
+          <p class="auth-subtitle">本地单文件 Markdown 加密账号管家</p>
+        </div>
+      </div>
+
+      <!-- Current .md File Path Bar -->
+      <div class="vault-file-box">
+        <div class="vault-file-label">
+          <span>当前挂载文件 (.md)</span>
+          <div class="vault-file-actions">
+            <button type="button" class="link-btn" id="btn-auth-open-existing">打开已有库</button>
+            <span class="dot-sep">·</span>
+            <button type="button" class="link-btn" id="btn-auth-choose-new">更改保存位置</button>
+          </div>
+        </div>
+        <div class="vault-file-path" id="auth-vault-path" title="点击在系统文件管理器（资源管理器 / Finder）中定位">加载中...</div>
+      </div>
+
+      <!-- Unlock Existing Vault Form -->
+      <form id="unlock-form" class="auth-form hidden">
+        <div class="vault-badge-row">
+          <span class="status-dot locked"></span>
+          <span id="unlock-vault-name">我的账号密码库</span>
+        </div>
+        <div class="form-group">
+          <label for="unlock-password">输入主密码解锁</label>
+          <div class="input-with-action">
+            <input type="password" id="unlock-password" placeholder="请输入主密码..." autocomplete="off" />
+            <button type="button" class="icon-btn toggle-pwd-btn" data-target="unlock-password" title="显示/隐藏密码">👁</button>
+          </div>
+        </div>
+        <div id="unlock-error" class="form-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block" id="btn-unlock-submit">解锁密码库</button>
+        <div class="auth-footer-hint">
+          忘记主密码将无法解密敏感字段，但您仍可直接打开 <code>.md</code> 查看分类与明文账号名。
+        </div>
+      </form>
+
+      <!-- Create New Vault Form -->
+      <form id="create-form" class="auth-form hidden">
+        <div class="vault-badge-row">
+          <span class="status-dot new"></span>
+          <span>首次使用 · 初始化加密 Markdown 密码库</span>
+        </div>
+        <div class="form-group">
+          <label for="create-vault-name">密码库标题</label>
+          <input type="text" id="create-vault-name" value="我的账号密码库" placeholder="例如：个人账号密码总库" />
+        </div>
+        <div class="form-group">
+          <label for="create-password">设置主密码（用于加密密码与密保答案）</label>
+          <div class="input-with-action">
+            <input type="password" id="create-password" placeholder="至少 4 位字符，建议设置好记的强主密码" autocomplete="off" />
+            <button type="button" class="icon-btn toggle-pwd-btn" data-target="create-password" title="显示/隐藏">👁</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="create-password-confirm">确认主密码</label>
+          <input type="password" id="create-password-confirm" placeholder="再次输入主密码确认" autocomplete="off" />
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="create-use-template" checked />
+          <span>生成示例分类与多地区模板（含苹果美区/国区/土区、主邮箱示例，可随时改删）</span>
+        </label>
+        <div id="create-error" class="form-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block" id="btn-create-submit">创建并进入密码库</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ==================== MAIN 3-PANE WORKSPACE ==================== -->
+  <main id="app-workspace" class="workspace hidden">
+    <!-- Top Header Bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="topbar-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <span id="header-vault-name">我的账号密码库</span>
+        </div>
+        <button type="button" class="path-pill" id="btn-reveal-md" title="点击在系统文件管理器（资源管理器 / Finder）中查看持久化的 .md 文件">
+          <span class="md-tag">MD</span>
+          <span id="header-vault-path" class="path-text">accounts_vault.md</span>
+        </button>
+        <button type="button" class="sync-pill hidden" id="btn-sync-external" title="外部编辑器修改了 .md 文件，点击重新加载并自动加密新增明文密码">
+          ↻ 检测到外部修改 · 点击同步
+        </button>
+      </div>
+
+      <div class="topbar-right">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-new-entry" title="快捷键 Ctrl+N">
+          + 新建账号
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-open-pwgen" title="随机强密码生成器">
+          🎲 密码生成器
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-switch-vault" title="切换或新建另一个 .md 密码库文件">
+          📂 切换库
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-change-mpw" title="修改主密码并重加密全库">
+          🔑 主密码
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-theme" title="切换深色/浅色外观">
+          🌗 外观
+        </button>
+        <button type="button" class="btn btn-danger-ghost btn-sm" id="btn-lock-vault" title="立即锁定密码库 (Ctrl+L)">
+          🔒 锁定
+        </button>
+      </div>
+    </header>
+
+    <!-- 3-Pane Body -->
+    <div class="panes-container">
+      <!-- Pane 1: Left Navigation Sidebar -->
+      <aside class="sidebar-pane">
+        <div class="nav-section">
+          <div class="nav-section-title">快速视图</div>
+          <ul class="nav-list" id="quick-nav-list">
+            <li class="nav-item active" data-filter-type="all">
+              <span class="nav-label">🗂 全部账号</span>
+              <span class="nav-count" id="count-all">0</span>
+            </li>
+            <li class="nav-item" data-filter-type="favorite">
+              <span class="nav-label">⭐ 星标常用</span>
+              <span class="nav-count" id="count-fav">0</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-header">
+            <span class="nav-section-title">分类归档</span>
+            <button type="button" class="mini-action-btn" id="btn-add-category" title="新建分类">+ 新建</button>
+          </div>
+          <ul class="nav-list" id="category-nav-list"></ul>
+        </div>
+
+        <div class="nav-section tags-section">
+          <div class="nav-section-header">
+            <span class="nav-section-title" id="sidebar-tags-title">地区 / 用途标签</span>
+            <button type="button" class="mini-action-btn hidden" id="btn-clear-tag">清除</button>
+          </div>
+          <div class="tag-cloud" id="sidebar-tag-cloud"></div>
+        </div>
+      </aside>
+
+      <!-- Pane 2: Middle Search & Account List -->
+      <section class="list-pane">
+        <div class="search-bar-wrap">
+          <div class="search-input-box">
+            <span class="search-icon">🔍</span>
+            <input
+              type="text"
+              id="search-input"
+              placeholder="搜索标题、账号、美区/土区、手机、备注... (Ctrl+F)"
+              autocomplete="off"
+            />
+            <button type="button" id="btn-clear-search" class="clear-search-btn hidden" title="清空搜索">×</button>
+          </div>
+          <div class="list-meta-bar">
+            <span id="list-filter-label">全部账号</span>
+            <span id="list-result-count">0 条记录</span>
+          </div>
+        </div>
+
+        <div id="account-list" class="account-list"></div>
+      </section>
+
+      <!-- Pane 3: Right Detail / Editor Area -->
+      <section class="detail-pane">
+        <!-- Empty Placeholder -->
+        <div id="detail-empty" class="detail-empty">
+          <div class="empty-illustration">🔐</div>
+          <h3>选择左侧账号查看详情，或新建一条记录</h3>
+          <p>支持按平台/地区分类归档，密码与密保自动使用 AES-256-GCM 加密写入本地 Markdown 文件。</p>
+          <button type="button" class="btn btn-primary" id="btn-empty-new">+ 新建第一个账号</button>
+        </div>
+
+        <!-- Account Read View -->
+        <div id="detail-view" class="detail-content hidden"></div>
+
+        <!-- Account Create / Edit Form View -->
+        <form id="entry-editor" class="detail-editor hidden">
+          <div class="editor-header">
+            <h2 id="editor-heading">新建账号</h2>
+            <div class="editor-header-actions">
+              <label class="fav-toggle-label">
+                <input type="checkbox" id="field-favorite" />
+                <span>⭐ 设为星标常用</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="editor-body">
+            <input type="hidden" id="field-id" />
+
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="field-category">所属分类 *</label>
+                <div class="category-select-row">
+                  <select id="field-category"></select>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-inline-new-cat" title="新增一个分类">+ 新分类</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="field-platform">服务 / 软件平台</label>
+                <input type="text" id="field-platform" placeholder="如：Apple ID / Gmail / Outlook / Steam" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="field-title">条目显示名称 *</label>
+              <input type="text" id="field-title" placeholder="如：Apple Store · 美区主力号 / Gmail · 工作主邮箱" required />
+            </div>
+
+            <div class="form-group">
+              <label for="field-tags">地区 / 用途标签（逗号分隔，保存或按回车后自动加入当前分类快捷标签）</label>
+              <input type="text" id="field-tags" placeholder="输入标签，例如：美区, 主力（按 Enter 可立即沉淀为下方快捷标签）" />
+              <div class="preset-tags-bar" id="preset-tags-bar"></div>
+            </div>
+
+            <div class="form-section-divider">核心登录凭据</div>
+
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="field-username">登录账号 / 邮箱 / ID（明文可读）</label>
+                <input type="text" id="field-username" placeholder="如：example@gmail.com" autocomplete="off" />
+              </div>
+              <div class="form-group">
+                <label for="field-password">登录密码（落盘自动加密）</label>
+                <div class="input-with-action">
+                  <input type="password" id="field-password" placeholder="输入密码或点击右侧生成" autocomplete="off" />
+                  <button type="button" class="icon-btn toggle-pwd-btn" data-target="field-password" title="显示/隐藏">👁</button>
+                  <button type="button" class="btn btn-ghost btn-xs" id="btn-inline-gen-pwd" title="随机生成强密码">🎲 生成</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Inline Quick Password Generator Panel -->
+            <div id="inline-pwgen-box" class="inline-pwgen-box hidden">
+              <div class="pwgen-row">
+                <label>长度: <strong id="inline-pw-len-val">18</strong></label>
+                <input type="range" id="inline-pw-len" min="8" max="48" value="18" />
+                <label class="chk-inline"><input type="checkbox" id="inline-pw-upper" checked /> A-Z</label>
+                <label class="chk-inline"><input type="checkbox" id="inline-pw-lower" checked /> a-z</label>
+                <label class="chk-inline"><input type="checkbox" id="inline-pw-digits" checked /> 0-9</label>
+                <label class="chk-inline"><input type="checkbox" id="inline-pw-symbols" checked /> 符号</label>
+                <label class="chk-inline"><input type="checkbox" id="inline-pw-noamb" checked /> 去混淆</label>
+                <button type="button" class="btn btn-primary btn-xs" id="btn-inline-pw-refresh">重新生成并填入</button>
+              </div>
+            </div>
+
+            <div class="form-grid-3">
+              <div class="form-group">
+                <label for="field-phone">绑定手机号</label>
+                <input type="text" id="field-phone" placeholder="如：+86 138... / +1 ..." />
+              </div>
+              <div class="form-group">
+                <label for="field-recovery-email">辅助 / 绑定邮箱</label>
+                <input type="text" id="field-recovery-email" placeholder="用于找回密码的辅助邮箱" />
+              </div>
+              <div class="form-group">
+                <label for="field-url">登录网址 / 入口</label>
+                <input type="text" id="field-url" placeholder="https://..." />
+              </div>
+            </div>
+
+            <div class="form-section-divider">
+              <span>密保问答与 2FA 恢复码（答案与恢复码落盘自动加密）</span>
+              <div class="divider-actions">
+                <button type="button" class="link-btn" id="btn-fill-apple-qa">填入苹果密保三问模板</button>
+                <span class="dot-sep">·</span>
+                <button type="button" class="link-btn" id="btn-add-qa-row">+ 添加密保问题</button>
+              </div>
+            </div>
+
+            <div id="qa-rows-container" class="qa-rows-container"></div>
+
+            <div class="form-group">
+              <label for="field-2fa">2FA 密钥 / 备用恢复码（支持多行，加密存储）</label>
+              <textarea id="field-2fa" rows="2" placeholder="如：Apple 双重认证恢复密钥、Google 备用验证码或 TOTP 密钥种子..."></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="field-notes">备注说明（明文 Markdown，可记录账单地址、续费日期、礼品卡渠道等）</label>
+              <textarea id="field-notes" rows="4" placeholder="自由填写备注信息..."></textarea>
+            </div>
+          </div>
+
+          <div class="editor-footer">
+            <button type="button" class="btn btn-ghost" id="btn-cancel-edit">取消</button>
+            <button type="submit" class="btn btn-primary" id="btn-save-entry">💾 保存并持久化至 .md</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <!-- ==================== UNIVERSAL MODAL OVERLAY ==================== -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal-card" id="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title">提示</h3>
+        <button type="button" class="icon-btn" id="btn-modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

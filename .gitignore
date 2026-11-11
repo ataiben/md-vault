@@ -1,0 +1,47 @@
+# ==================== User Vault Data & Secrets (NEVER COMMIT) ====================
+data/*.md
+**/*.vault_backups/
+.vault_backups/
+.vault_prefs.json
+*.tmp
+*.bak
+
+# ==================== Python Bytecode & Environments ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# ==================== Packaging & Build Artifacts ====================
+build/
+dist/
+*.spec
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==================== Test & Coverage Caches ====================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+
+# ==================== OS & Editor Files ====================
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo

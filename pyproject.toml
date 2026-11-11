@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "md-vault"
+version = "0.1.0"
+description = "本地单文件 Markdown 加密账号密码管家（支持 Windows 与 macOS）"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+keywords = ["password-manager", "markdown", "aes-gcm", "obsidian", "local-first", "pywebview"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: MacOS X",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+]
+dependencies = [
+    "pywebview>=5.0",
+    "cryptography>=42.0",
+    "pydantic>=2.0",
+    "PyYAML>=6.0",
+    "watchfiles>=0.21",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+md-vault = "app:main"
+
+[tool.setuptools.packages.find]
+include = ["core*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

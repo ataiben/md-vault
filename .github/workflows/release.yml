@@ -1,0 +1,96 @@
+name: Release Desktop Builds
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x64 Portable
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Build MD-Vault.exe
+        run: python build_app.py
+
+      - name: Package zip archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/MD-Vault | Out-Null
+          Copy-Item dist/MD-Vault.exe package/MD-Vault/
+          Copy-Item README.md, LICENSE, SECURITY.md package/MD-Vault/
+          Compress-Archive -Path package/MD-Vault/* -DestinationPath MD-Vault-Windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MD-Vault-Windows-x64
+          path: MD-Vault-Windows-x64.zip
+
+  build-macos:
+    name: Build macOS App Bundle (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Build MD-Vault.app
+        run: python build_app.py
+
+      - name: Ad-hoc sign & package .app archive
+        run: |
+          codesign --force --deep --sign - dist/MD-Vault.app
+          ditto -c -k --sequesterRsrc --keepParent dist/MD-Vault.app MD-Vault-macOS-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MD-Vault-macOS-arm64
+          path: MD-Vault-macOS-arm64.zip
+
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            MD-Vault-Windows-x64.zip
+            MD-Vault-macOS-arm64.zip
