@@ -8,7 +8,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -45,11 +44,17 @@ def main() -> int:
     ]
 
     if sys.platform == "win32":
+        ico_file = ui_dir / "assets" / "icon.ico"
+        if ico_file.exists():
+            cmd.extend(["--icon", str(ico_file)])
         # Single portable executable on Windows
         cmd.append("--onefile")
     elif sys.platform == "darwin":
+        icns_file = ui_dir / "assets" / "icon.icns"
+        if icns_file.exists():
+            cmd.extend(["--icon", str(icns_file)])
         # Native macOS .app bundle
-        cmd.extend(["--osx-bundle-identifier", "io.github.mdvault.desktop"])
+        cmd.extend(["--osx-bundle-identifier", "io.github.ataiben.mdvault"])
 
     cmd.append(str(project_root / "app.py"))
 

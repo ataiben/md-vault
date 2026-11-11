@@ -270,14 +270,19 @@ textarea {
 }
 
 .brand-logo {
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   border-radius: 12px;
-  background: var(--accent);
-  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+}
+.brand-logo img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  display: block;
 }
 .brand-logo svg {
   width: 24px;
@@ -414,6 +419,12 @@ textarea {
   font-weight: 700;
   font-size: 14.5px;
   white-space: nowrap;
+}
+.topbar-logo img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  display: block;
 }
 .topbar-logo svg {
   width: 18px;

@@ -1,16 +1,10 @@
-# 🔐 MD-Vault · 本地单文件 Markdown 加密账号管家
+# <img src="ui/assets/icon.png" alt="MD-Vault" width="34" align="top" /> MD-Vault · 本地单文件 Markdown 加密账号管家
 
 [![Release](https://img.shields.io/github/v/release/ataiben/md-vault?label=Download&color=success)](https://github.com/ataiben/md-vault/releases/latest)
 [![CI](https://github.com/ataiben/md-vault/actions/workflows/ci.yml/badge.svg)](https://github.com/ataiben/md-vault/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)](#快速开始)
-
-> **📦 免安装版直接下载（含独立可执行程序，无需安装 Python）：**
-> - **Windows 10 / 11 (`.exe`)**：[**点击下载 `MD-Vault-Windows-x64.zip`**](https://github.com/ataiben/md-vault/releases/latest/download/MD-Vault-Windows-x64.zip)
-> - **macOS Apple Silicon (`.app`)**：[**点击下载 `MD-Vault-macOS-arm64.zip`**](https://github.com/ataiben/md-vault/releases/latest/download/MD-Vault-macOS-arm64.zip)
->
-> *(注：请点击上方链接或右侧 **Releases** 下载编译好的程序包；页面右上角绿色的 `Code -> Download ZIP` 下载的是纯 Python 源代码，里面不含 `.exe`。)*
 
 **MD-Vault** 是一款**纯本地、零联网、单文件持久化**的桌面账号与密码管理工具（支持 **Windows** 与 **macOS**）。
 
@@ -87,8 +81,6 @@ updated_at: '2026-11-11 15:30'
 - **Windows 10 / 11**：下载 [**`MD-Vault-Windows-x64.zip`**](https://github.com/ataiben/md-vault/releases/latest/download/MD-Vault-Windows-x64.zip)，解压后双击里面的 **`MD-Vault.exe`** 即可运行。
 - **macOS (Apple Silicon)**：下载 [**`MD-Vault-macOS-arm64.zip`**](https://github.com/ataiben/md-vault/releases/latest/download/MD-Vault-macOS-arm64.zip)，解压后将 **`MD-Vault.app`** 拖入「应用程序」打开。
   > *macOS 首次打开提示*：由于开源构建未附加商业 Apple Developer 付费公证签名，首次打开若提示“无法验证开发者”，可在终端执行 `xattr -cr /Applications/MD-Vault.app` 或在「系统设置 → 隐私与安全性」中点击“仍要打开”。
-
-*(历史版本可在 [**Releases 页面**](https://github.com/ataiben/md-vault/releases) 查看，请注意选择带有 `Windows` 或 `macOS` 字样的安装包，而非底部的 `Source code`。)*
 
 ---
 

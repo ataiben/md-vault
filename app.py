@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Tuple
 
 import webview
 
@@ -76,9 +76,82 @@ def resolve_runtime_paths() -> Tuple[Path, Path]:
     return resource_root, data_root
 
 
+def _apply_windows_app_icon(window: Any, ico_path: Path) -> None:
+    """Apply custom .ico to Windows taskbar & window titlebar even when running from source."""
+    if sys.platform != "win32" or not ico_path.exists():
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("io.github.ataiben.mdvault")
+    except Exception:
+        pass
+
+    def _on_shown() -> None:
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            IMAGE_ICON = 1
+            LR_LOADFROMFILE = 0x0010
+            LR_DEFAULTSIZE = 0x0040
+            WM_SETICON = 0x0080
+            ICON_SMALL = 0
+            ICON_BIG = 1
+
+            user32.LoadImageW.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_uint,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_uint,
+            ]
+            user32.LoadImageW.restype = ctypes.c_void_p
+            user32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+            user32.FindWindowW.restype = ctypes.c_void_p
+            user32.SendMessageW.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_uint,
+                ctypes.c_size_t,
+                ctypes.c_void_p,
+            ]
+            user32.SendMessageW.restype = ctypes.c_void_p
+
+            hwnd = None
+            native = getattr(window, "native", None)
+            if native is not None and hasattr(native, "Handle"):
+                try:
+                    hwnd = int(native.Handle.ToInt64())
+                except Exception:
+                    hwnd = None
+            if not hwnd:
+                hwnd = user32.FindWindowW(None, window.title)
+            if not hwnd:
+                return
+
+            h_small = user32.LoadImageW(None, str(ico_path), IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+            h_big = user32.LoadImageW(
+                None, str(ico_path), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE
+            )
+            if h_small:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
+            if h_big:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+        except Exception:
+            pass
+
+    try:
+        window.events.shown += _on_shown
+    except Exception:
+        pass
+
+
 def main() -> None:
     resource_root, data_root = resolve_runtime_paths()
     ui_entry = resource_root / "ui" / "index.html"
+    ico_path = resource_root / "ui" / "assets" / "icon.ico"
+    png_icon_path = resource_root / "ui" / "assets" / "icon.png"
 
     vault_api = VaultApi(data_root)
 
@@ -92,12 +165,15 @@ def main() -> None:
         text_select=True,
     )
     vault_api._bind_window(window)
+    _apply_windows_app_icon(window, ico_path)
 
     # Use Edge WebView2 on Windows; native WebKit (Cocoa) on macOS; auto-detect elsewhere
     if sys.platform == "win32":
         webview.start(gui="edgechromium", debug=False)
-    else:
+    elif sys.platform == "darwin":
         webview.start(debug=False)
+    else:
+        webview.start(icon=str(png_icon_path) if png_icon_path.exists() else None, debug=False)
 
 
 if __name__ == "__main__":

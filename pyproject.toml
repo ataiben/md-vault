@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "md-vault"
-version = "0.1.1"
+version = "0.1.2"
 description = "本地单文件 Markdown 加密账号密码管家（支持 Windows 与 macOS）"
 readme = "README.md"
 license = { file = "LICENSE" }
