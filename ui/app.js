@@ -17,7 +17,7 @@
     selectedId: null,
     mode: "view", // "view" | "edit"
     revealedFields: new Set(),
-    appVersion: "0.2.0",
+    appVersion: "0.2.1",
     autoCheckUpdates: true,
     updateInfo: null,
     startupUpdateChecked: false,
@@ -102,11 +102,26 @@
   }
 
   // ==================== BOOT & AUTH ====================
+  function syncThemeLabel() {
+    const labelEl = $("settings-theme-label");
+    if (labelEl) {
+      const cur = document.documentElement.getAttribute("data-theme") || "dark";
+      labelEl.textContent = cur === "light" ? "浅色" : "深色";
+    }
+  }
+
+  function closeSettingsPopover() {
+    const pop = $("settings-popover");
+    const btn = $("btn-sidebar-settings");
+    if (pop) pop.classList.add("hidden");
+    if (btn) btn.classList.remove("active");
+  }
+
   function renderUpdateIndicators() {
-    const verText = `v${state.appVersion || "0.2.0"}`;
+    const verText = `v${state.appVersion || "0.2.1"}`;
     const authBtn = $("btn-auth-update");
-    const topBtn = $("btn-check-update");
-    const topLabel = $("topbar-update-label");
+    const menuBadge = $("topbar-update-label");
+    const sidebarBadge = $("sidebar-version-badge");
     const hasUpd = Boolean(state.updateInfo && state.updateInfo.has_update);
 
     if (authBtn) {
@@ -119,14 +134,18 @@
         : `当前版本 ${verText} · 点击检查软件更新`;
     }
 
-    if (topBtn && topLabel) {
-      topBtn.classList.toggle("has-update", hasUpd);
-      topLabel.textContent = hasUpd
+    if (menuBadge) {
+      menuBadge.classList.toggle("has-update", hasUpd);
+      menuBadge.textContent = hasUpd
+        ? `⬆ v${state.updateInfo.latest_version}`
+        : verText;
+    }
+
+    if (sidebarBadge) {
+      sidebarBadge.classList.toggle("has-update", hasUpd);
+      sidebarBadge.textContent = hasUpd
         ? `⬆ 新版 v${state.updateInfo.latest_version}`
-        : `🔄 ${verText}`;
-      topBtn.title = hasUpd
-        ? `发现新版本 v${state.updateInfo.latest_version}，点击一键更新`
-        : `当前版本 ${verText} · 点击检查软件更新`;
+        : verText;
     }
   }
 
@@ -140,7 +159,7 @@
         renderUpdateIndicators();
         if (res.has_update) {
           showToast(
-            `发现新版本 v${res.latest_version}，点击顶栏绿色按钮即可一键更新`,
+            `发现新版本 v${res.latest_version}，可在左下角「设置」中一键更新`,
             "success"
           );
         }
@@ -1454,24 +1473,54 @@
     $("btn-new-entry").addEventListener("click", () => openEditor(null));
     $("btn-empty-new").addEventListener("click", () => openEditor(null));
     $("btn-open-pwgen").addEventListener("click", openStandalonePasswordModal);
-    $("btn-switch-vault").addEventListener("click", openSwitchVaultModal);
-    $("btn-change-mpw").addEventListener("click", openChangeMasterPasswordModal);
+
+    if ($("btn-sidebar-settings")) {
+      $("btn-sidebar-settings").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const pop = $("settings-popover");
+        if (!pop) return;
+        const willShow = pop.classList.contains("hidden");
+        pop.classList.toggle("hidden", !willShow);
+        $("btn-sidebar-settings").classList.toggle("active", willShow);
+      });
+    }
+
+    document.addEventListener("click", (ev) => {
+      const wrap = $("sidebar-settings-wrap");
+      if (wrap && !wrap.contains(ev.target)) {
+        closeSettingsPopover();
+      }
+    });
+
+    $("btn-switch-vault").addEventListener("click", () => {
+      closeSettingsPopover();
+      openSwitchVaultModal();
+    });
+    $("btn-change-mpw").addEventListener("click", () => {
+      closeSettingsPopover();
+      openChangeMasterPasswordModal();
+    });
 
     $("btn-toggle-theme").addEventListener("click", () => {
       const html = document.documentElement;
       const next = html.getAttribute("data-theme") === "dark" ? "light" : "dark";
       html.setAttribute("data-theme", next);
       localStorage.setItem("md_vault_theme", next);
+      syncThemeLabel();
     });
 
     if ($("btn-check-update")) {
-      $("btn-check-update").addEventListener("click", () => openUpdateModal(false));
+      $("btn-check-update").addEventListener("click", () => {
+        closeSettingsPopover();
+        openUpdateModal(false);
+      });
     }
     if ($("btn-auth-update")) {
       $("btn-auth-update").addEventListener("click", () => openUpdateModal(false));
     }
 
     $("btn-lock-vault").addEventListener("click", async () => {
+      closeSettingsPopover();
       const status = await api().lock_vault();
       state.entries = [];
       state.revealedFields.clear();
@@ -1605,9 +1654,15 @@
     // Global Keyboard Shortcuts
     document.addEventListener("keydown", (ev) => {
       const isAppVisible = !$("app-workspace").classList.contains("hidden");
-      if (ev.key === "Escape" && !$("modal-overlay").classList.contains("hidden")) {
-        closeModal();
-        return;
+      if (ev.key === "Escape") {
+        if (!$("modal-overlay").classList.contains("hidden")) {
+          closeModal();
+          return;
+        }
+        if ($("settings-popover") && !$("settings-popover").classList.contains("hidden")) {
+          closeSettingsPopover();
+          return;
+        }
       }
       if (!isAppVisible) return;
 
@@ -1653,6 +1708,7 @@
   if (savedTheme === "light" || savedTheme === "dark") {
     document.documentElement.setAttribute("data-theme", savedTheme);
   }
+  syncThemeLabel();
 
   const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || "");
   if (isMac) {

@@ -95,7 +95,7 @@
     <header class="topbar">
       <div class="topbar-left">
         <div class="topbar-logo">
-          <img src="assets/icon.png" alt="MD-Vault" />
+          <img src="assets/icon-topbar.png" alt="MD-Vault" />
           <span id="header-vault-name">我的账号密码库</span>
         </div>
         <button type="button" class="path-pill" id="btn-reveal-md" title="点击在系统文件管理器（资源管理器 / Finder）中查看持久化的 .md 文件">
@@ -109,25 +109,16 @@
 
       <div class="topbar-right">
         <button type="button" class="btn btn-primary btn-sm" id="btn-new-entry" title="快捷键 Ctrl+N">
-          + 新建账号
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>新建账号</span>
         </button>
         <button type="button" class="btn btn-ghost btn-sm" id="btn-open-pwgen" title="随机强密码生成器">
-          🎲 密码生成器
-        </button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-switch-vault" title="切换或新建另一个 .md 密码库文件">
-          📂 切换库
-        </button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-change-mpw" title="修改主密码并重加密全库">
-          🔑 主密码
-        </button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-theme" title="切换深色/浅色外观">
-          🌗 外观
-        </button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-check-update" title="当前版本 · 点击检查软件更新">
-          <span id="topbar-update-label">🔄 更新</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor"></circle><circle cx="15.5" cy="8.5" r="1.2" fill="currentColor"></circle><circle cx="12" cy="12" r="1.2" fill="currentColor"></circle><circle cx="8.5" cy="15.5" r="1.2" fill="currentColor"></circle><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor"></circle></svg>
+          <span>密码生成器</span>
         </button>
         <button type="button" class="btn btn-danger-ghost btn-sm" id="btn-lock-vault" title="立即锁定密码库 (Ctrl+L)">
-          🔒 锁定
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          <span>锁定</span>
         </button>
       </div>
     </header>
@@ -136,34 +127,70 @@
     <div class="panes-container">
       <!-- Pane 1: Left Navigation Sidebar -->
       <aside class="sidebar-pane">
-        <div class="nav-section">
-          <div class="nav-section-title">快速视图</div>
-          <ul class="nav-list" id="quick-nav-list">
-            <li class="nav-item active" data-filter-type="all">
-              <span class="nav-label">🗂 全部账号</span>
-              <span class="nav-count" id="count-all">0</span>
-            </li>
-            <li class="nav-item" data-filter-type="favorite">
-              <span class="nav-label">⭐ 星标常用</span>
-              <span class="nav-count" id="count-fav">0</span>
-            </li>
-          </ul>
+        <div class="sidebar-scroll">
+          <div class="nav-section">
+            <div class="nav-section-title">快速视图</div>
+            <ul class="nav-list" id="quick-nav-list">
+              <li class="nav-item active" data-filter-type="all">
+                <span class="nav-label">🗂 全部账号</span>
+                <span class="nav-count" id="count-all">0</span>
+              </li>
+              <li class="nav-item" data-filter-type="favorite">
+                <span class="nav-label">⭐ 星标常用</span>
+                <span class="nav-count" id="count-fav">0</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="nav-section">
+            <div class="nav-section-header">
+              <span class="nav-section-title">分类归档</span>
+              <button type="button" class="mini-action-btn" id="btn-add-category" title="新建分类">+ 新建</button>
+            </div>
+            <ul class="nav-list" id="category-nav-list"></ul>
+          </div>
+
+          <div class="nav-section tags-section">
+            <div class="nav-section-header">
+              <span class="nav-section-title" id="sidebar-tags-title">快捷筛选标签</span>
+              <button type="button" class="mini-action-btn hidden" id="btn-clear-tag">清除</button>
+            </div>
+            <div class="tag-cloud" id="sidebar-tag-cloud"></div>
+          </div>
         </div>
 
-        <div class="nav-section">
-          <div class="nav-section-header">
-            <span class="nav-section-title">分类归档</span>
-            <button type="button" class="mini-action-btn" id="btn-add-category" title="新建分类">+ 新建</button>
+        <!-- Pinned Bottom-Left Settings Trigger & Popover Menu -->
+        <div class="sidebar-footer" id="sidebar-settings-wrap">
+          <div id="settings-popover" class="settings-popover hidden">
+            <button type="button" class="settings-menu-item" id="btn-switch-vault">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+              <span class="settings-item-label">切换密码库</span>
+              <span class="settings-item-meta">.md</span>
+            </button>
+            <button type="button" class="settings-menu-item" id="btn-change-mpw">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+              <span class="settings-item-label">修改主密码</span>
+            </button>
+            <button type="button" class="settings-menu-item" id="btn-toggle-theme">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+              <span class="settings-item-label">外观主题</span>
+              <span class="settings-item-meta" id="settings-theme-label">深色</span>
+            </button>
+            <div class="settings-menu-divider"></div>
+            <button type="button" class="settings-menu-item" id="btn-check-update">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <span class="settings-item-label">检查更新</span>
+              <span class="settings-item-badge" id="topbar-update-label">v0.2.1</span>
+            </button>
           </div>
-          <ul class="nav-list" id="category-nav-list"></ul>
-        </div>
 
-        <div class="nav-section tags-section">
-          <div class="nav-section-header">
-            <span class="nav-section-title" id="sidebar-tags-title">快捷筛选标签</span>
-            <button type="button" class="mini-action-btn hidden" id="btn-clear-tag">清除</button>
-          </div>
-          <div class="tag-cloud" id="sidebar-tag-cloud"></div>
+          <button type="button" class="sidebar-settings-btn" id="btn-sidebar-settings" title="打开系统设置菜单">
+            <span class="sidebar-settings-left">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              <span>设置</span>
+            </span>
+            <span class="sidebar-version-tag" id="sidebar-version-badge">v0.2.1</span>
+          </button>
         </div>
       </aside>
 
