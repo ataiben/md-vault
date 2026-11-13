@@ -32,7 +32,14 @@ def resolve_runtime_paths() -> Tuple[Path, Path]:
         return source_root, source_root
 
     # Frozen bundle (PyInstaller)
-    exe_dir = Path(sys.executable).resolve().parent
+    exe_path = Path(sys.executable).resolve()
+    exe_dir = exe_path.parent
+    if sys.platform == "win32":
+        # Clean up any leftover .old backup from previous self-update rename fallback
+        try:
+            exe_path.with_name(exe_path.name + ".old").unlink(missing_ok=True)
+        except Exception:
+            pass
     meipass = getattr(sys, "_MEIPASS", None)
     resource_candidates = []
     if meipass:

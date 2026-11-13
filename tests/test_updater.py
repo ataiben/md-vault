@@ -1,6 +1,10 @@
 import hashlib
 import io
 import json
+import os
+import subprocess
+import sys
+import time
 import urllib.error
 import zipfile
 from pathlib import Path
@@ -10,6 +14,9 @@ import pytest
 from core.api import VaultApi
 from core.updater import (
     _extract_windows_exe_from_zip,
+    _spawn_windows_powershell,
+    _windows_hidden_creationflags,
+    build_clean_subprocess_env,
     build_windows_updater_ps_script,
     check_for_updates,
     is_newer_version,
@@ -140,3 +147,63 @@ def test_auto_update_preference_persistence(tmp_path: Path):
     assert Path(st["vault_path"]) == custom_md.resolve()
     api._storage.stop_watching()
     api2._storage.stop_watching()
+
+
+def test_clean_env_and_windows_creationflags(monkeypatch):
+    monkeypatch.setenv("_MEIPASS2", r"C:\Temp\_MEI99999")
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", r"C:\Temp\_MEI99999")
+    monkeypatch.setenv("PYTHONPATH", r"C:\Temp\bad")
+    monkeypatch.setenv("MDVAULT_KEEP_ME", "yes")
+
+    clean = build_clean_subprocess_env()
+    assert "_MEIPASS2" not in clean
+    assert "_PYI_APPLICATION_HOME_DIR" not in clean
+    assert "PYTHONPATH" not in clean
+    assert clean.get("MDVAULT_KEEP_ME") == "yes"
+
+    flags = _windows_hidden_creationflags()
+    detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    assert (flags & create_no_window) != 0
+    # Regression guard: DETACHED_PROCESS + CREATE_NO_WINDOW causes powershell.exe to exit without running
+    assert (flags & detached) == 0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell self-update E2E test")
+def test_windows_powershell_swap_and_relaunch_e2e(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("_MEIPASS2", r"C:\Temp\_MEI_POLLUTED")
+
+    app_dir = tmp_path / "app_dir"
+    temp_dir = tmp_path / "temp_update"
+    app_dir.mkdir()
+    temp_dir.mkdir()
+    (temp_dir / "dummy.zip").write_bytes(b"zip")
+
+    target_cmd = app_dir / "FakeVaultUpdateTest.cmd"
+    staged_cmd = app_dir / "FakeVaultUpdateTest.cmd.new"
+    marker_file = app_dir / "relaunched_marker.txt"
+
+    target_cmd.write_text("@echo off\r\necho OLD>nul\r\n", encoding="utf-8")
+    staged_cmd.write_text(
+        f'@echo off\r\necho UPDATED_MEI=%_MEIPASS2%> "{marker_file}"\r\n',
+        encoding="utf-8",
+    )
+
+    # Use a non-existent PID so Wait-Process finishes immediately
+    ps = build_windows_updater_ps_script(
+        pid=99999999,
+        staged_exe=staged_cmd,
+        target_exe=target_cmd,
+        temp_dir=temp_dir,
+    )
+    _spawn_windows_powershell(ps)
+
+    deadline = time.time() + 10.0
+    while time.time() < deadline and not marker_file.exists():
+        time.sleep(0.2)
+
+    assert marker_file.exists(), "Updated binary was not relaunched by PowerShell helper"
+    assert not staged_cmd.exists(), "Staged .new file was not moved onto target"
+    assert not temp_dir.exists(), "Temporary update folder was not cleaned up"
+    marker_content = marker_file.read_text(encoding="utf-8").strip()
+    assert marker_content == "UPDATED_MEI="

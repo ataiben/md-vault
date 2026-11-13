@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -293,30 +294,116 @@ def _extract_windows_exe_from_zip(zip_path: Path, extract_dir: Path) -> Path:
         return extracted
 
 
+def build_clean_subprocess_env() -> Dict[str, str]:
+    """
+    Strip PyInstaller bootloader and embedded Python environment variables so that
+    a newly launched MD-Vault executable unpacks its own archive cleanly instead of
+    inheriting the dying parent process's temporary _MEIPASS directory.
+    """
+    blocked_prefixes = ("_MEI", "_PYI", "PYINSTALLER", "TCL_LIBRARY", "TK_LIBRARY")
+    blocked_exact = {"PYTHONPATH", "PYTHONHOME"}
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if not k.upper().startswith(blocked_prefixes) and k.upper() not in blocked_exact
+    }
+
+
+def _windows_hidden_creationflags() -> int:
+    """
+    Return Win32 process creation flags for hidden detached helper commands.
+    NOTE: Never combine CREATE_NO_WINDOW with DETACHED_PROCESS — on Windows,
+    DETACHED_PROCESS strips the console handle completely and causes powershell.exe
+    ConsoleHost to abort with exit code 0 before executing any script.
+    """
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
+        subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
+    )
+
+
 def build_windows_updater_ps_script(
     pid: int,
     staged_exe: Path,
     target_exe: Path,
     temp_dir: Path,
 ) -> str:
-    """Build PowerShell script that waits for old PID exit, swaps .exe, cleans temp, and relaunches."""
+    """
+    Build PowerShell script that waits for both the Python worker PID and any
+    PyInstaller --onefile parent bootloader process holding target_exe, replaces
+    the executable (with NTFS .old rename fallback), cleans temp, and relaunches.
+    """
     # Escape single quotes for PowerShell single-quoted literal strings
     s_staged = str(staged_exe).replace("'", "''")
     s_target = str(target_exe).replace("'", "''")
+    s_bak = str(target_exe.with_name(target_exe.name + ".old")).replace("'", "''")
     s_workdir = str(target_exe.parent).replace("'", "''")
     s_temp = str(temp_dir).replace("'", "''")
 
     return f"""
-$ErrorActionPreference = 'SilentlyContinue'
-Wait-Process -Id {int(pid)} -Timeout 20
-for ($i = 0; $i -lt 20; $i++) {{
-    Move-Item -LiteralPath '{s_staged}' -Destination '{s_target}' -Force
-    if ($?) {{ break }}
-    Start-Sleep -Milliseconds 400
+$ErrorActionPreference = 'Stop'
+Remove-Item Env:_MEI*, Env:_PYI*, Env:PYTHON* -ErrorAction SilentlyContinue
+$target = '{s_target}'
+$staged = '{s_staged}'
+$bak = '{s_bak}'
+$workdir = '{s_workdir}'
+$tempDir = '{s_temp}'
+
+try {{ Wait-Process -Id {int(pid)} -Timeout 20 -ErrorAction SilentlyContinue }} catch {{}}
+$procName = [System.IO.Path]::GetFileNameWithoutExtension($target)
+if ($procName) {{
+    Get-Process -Name $procName -ErrorAction SilentlyContinue |
+        Where-Object {{ try {{ $_.Path -eq $target }} catch {{ $false }} }} |
+        Wait-Process -Timeout 20 -ErrorAction SilentlyContinue
 }}
-Remove-Item -LiteralPath '{s_temp}' -Recurse -Force
-Start-Process -FilePath '{s_target}' -WorkingDirectory '{s_workdir}'
+
+$swapped = $false
+for ($i = 0; $i -lt 40; $i++) {{
+    try {{
+        Move-Item -LiteralPath $staged -Destination $target -Force -ErrorAction Stop
+        $swapped = $true
+        break
+    }} catch {{
+        try {{
+            if (Test-Path -LiteralPath $bak) {{
+                Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue
+            }}
+            Move-Item -LiteralPath $target -Destination $bak -Force -ErrorAction Stop
+            Move-Item -LiteralPath $staged -Destination $target -Force -ErrorAction Stop
+            Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue
+            $swapped = $true
+            break
+        }} catch {{}}
+        Start-Sleep -Milliseconds 300
+    }}
+}}
+
+Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+if ($swapped -or (Test-Path -LiteralPath $target)) {{
+    Start-Process -FilePath $target -WorkingDirectory $workdir
+}}
 """.strip()
+
+
+def _spawn_windows_powershell(ps_script: str) -> None:
+    """Spawn a hidden, consoleless PowerShell helper detached from parent stdio handles."""
+    encoded_cmd = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
+    subprocess.Popen(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            encoded_cmd,
+        ],
+        creationflags=_windows_hidden_creationflags(),
+        env=build_clean_subprocess_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
 
 
 def apply_update_and_prepare_restart(
@@ -333,6 +420,7 @@ def apply_update_and_prepare_restart(
     if install_mode == "git_source":
         if progress_cb:
             progress_cb("正在通过 Git 拉取最新开源代码...", 35)
+        git_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
         proc = subprocess.run(
             ["git", "pull", "--ff-only", "origin", "main"],
             cwd=str(project_root),
@@ -341,6 +429,7 @@ def apply_update_and_prepare_restart(
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            creationflags=git_flags,
         )
         if proc.returncode != 0:
             err_msg = (proc.stderr or proc.stdout or "").strip()
@@ -351,17 +440,35 @@ def apply_update_and_prepare_restart(
         if progress_cb:
             progress_cb("代码更新完成，正在重启应用...", 95)
 
-        creationflags = 0
+        pid = os.getpid()
+        app_script = project_root / "app.py"
         if sys.platform == "win32":
-            creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            py_exe = Path(sys.executable)
+            pyw_candidate = py_exe.with_name("pythonw.exe")
+            launcher_py = pyw_candidate if pyw_candidate.exists() else py_exe
+            s_py = str(launcher_py).replace("'", "''")
+            s_app = str(app_script).replace("'", "''")
+            s_cwd = str(project_root).replace("'", "''")
+            ps_relaunch = f"""
+try {{ Wait-Process -Id {int(pid)} -Timeout 15 -ErrorAction SilentlyContinue }} catch {{}}
+Start-Process -FilePath '{s_py}' -ArgumentList '"{s_app}"' -WorkingDirectory '{s_cwd}'
+""".strip()
+            _spawn_windows_powershell(ps_relaunch)
+        else:
+            sh_cmd = (
+                f"for i in $(seq 1 30); do kill -0 {int(pid)} 2>/dev/null || break; sleep 0.2; done; "
+                f"exec {shlex.quote(sys.executable)} {shlex.quote(str(app_script))}"
             )
-        subprocess.Popen(
-            [sys.executable, str(project_root / "app.py")],
-            cwd=str(project_root),
-            creationflags=creationflags,
-            start_new_session=(sys.platform != "win32"),
-        )
+            subprocess.Popen(
+                ["/bin/sh", "-c", sh_cmd],
+                cwd=str(project_root),
+                env=build_clean_subprocess_env(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
         return {"ok": True, "restart": True}
 
     download_url = str(update_info.get("download_url") or "").strip()
@@ -408,21 +515,7 @@ def apply_update_and_prepare_restart(
                 target_exe=target_exe,
                 temp_dir=temp_dir,
             )
-            encoded_cmd = base64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
-                subprocess, "DETACHED_PROCESS", 0x00000008
-            )
-            subprocess.Popen(
-                [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-WindowStyle",
-                    "Hidden",
-                    "-EncodedCommand",
-                    encoded_cmd,
-                ],
-                creationflags=flags,
-            )
+            _spawn_windows_powershell(ps_script)
             if progress_cb:
                 progress_cb("准备就绪，正在重启进入新版本...", 100)
             return {"ok": True, "restart": True}
@@ -451,23 +544,35 @@ def apply_update_and_prepare_restart(
 
             sh_script = temp_dir / "apply_mac_update.sh"
             pid = os.getpid()
+            q_target = shlex.quote(str(target_app))
+            q_new = shlex.quote(str(new_app))
+            q_temp = shlex.quote(str(temp_dir))
             sh_script.write_text(
                 f"""#!/bin/sh
+unset _MEIPASS2 PYTHONPATH PYTHONHOME TCL_LIBRARY TK_LIBRARY
 for i in $(seq 1 40); do
-    if ! kill -0 {pid} 2>/dev/null; then
+    if ! kill -0 {int(pid)} 2>/dev/null; then
         break
     fi
     sleep 0.3
 done
-rm -rf "{target_app}"
-mv "{new_app}" "{target_app}"
-open "{target_app}"
-rm -rf "{temp_dir}"
+rm -rf {q_target}
+mv {q_new} {q_target}
+open {q_target}
+rm -rf {q_temp}
 """,
                 encoding="utf-8",
             )
             sh_script.chmod(0o755)
-            subprocess.Popen(["/bin/sh", str(sh_script)], start_new_session=True)
+            subprocess.Popen(
+                ["/bin/sh", str(sh_script)],
+                env=build_clean_subprocess_env(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
             if progress_cb:
                 progress_cb("准备就绪，正在重启进入新版本...", 100)
             return {"ok": True, "restart": True}

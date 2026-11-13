@@ -950,7 +950,14 @@ class VaultApi:
                 self._doc = None
                 self._storage.stop_watching()
 
+            def _force_exit() -> None:
+                os._exit(0)
+
             def _close_for_restart() -> None:
+                # Watchdog ensures prompt exit even if WebView2 / GUI teardown lingers
+                force_timer = threading.Timer(0.8, _force_exit)
+                force_timer.daemon = True
+                force_timer.start()
                 if self._window is not None:
                     try:
                         self._window.destroy()
