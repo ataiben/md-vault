@@ -1,5 +1,7 @@
 # ==================== User Vault Data & Secrets (NEVER COMMIT) ====================
 data/*.md
+data/*.csv
+*vault_export*.csv
 **/*.vault_backups/
 .vault_backups/
 .vault_prefs.json

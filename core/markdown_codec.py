@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-from core.crypto import CryptoEngine
+from core.crypto import (
+    VERIFIER_AAD,
+    VERIFIER_PLAINTEXT,
+    CryptoEngine,
+    CryptoError,
+    build_field_aad,
+    is_encrypted_token,
+    is_v2_encrypted_token,
+)
 from core.models import (
     AccountEntry,
     SecurityQA,
@@ -14,6 +22,7 @@ from core.models import (
     generate_entry_id,
     now_timestamp,
 )
+from core.totp import extract_totp_from_text, has_extra_recovery_beyond_totp
 
 ID_COMMENT_RE = re.compile(r"^<!--\s*id:\s*([A-Za-z0-9_\-]+)\s*-->$")
 BULLET_KV_RE = re.compile(r"^-\s+\*\*(.+?)\*\*:\s*(.*)$")
@@ -53,57 +62,197 @@ def _anchor_slug(category: str) -> str:
     return re.sub(r"\s+", "-", slug)
 
 
-def seal_document_entries(doc: VaultDocument, crypto: CryptoEngine) -> bool:
+def seal_document_entries(
+    doc: VaultDocument, crypto: CryptoEngine, upgrade_v1: bool = False
+) -> bool:
     """
-    Ensure all sensitive fields in doc.entries are encrypted with ENC[v1:...].
-    Returns True if any plaintext sensitive field was newly sealed.
+    Ensure all sensitive fields in doc.entries are encrypted with AAD-bound ENC[v2:...].
+    Existing valid ENC[v1:...] fields remain readable unless upgrade_v1=True.
+    Returns True if any sensitive field was newly sealed or upgraded.
     """
     modified = False
     for entry in doc.entries:
+        if not entry.id:
+            entry.id = generate_entry_id()
+            modified = True
+
         if entry.password:
-            sealed, changed = crypto.seal_if_plaintext(entry.password)
+            sealed, changed = crypto.seal_if_plaintext(
+                entry.password,
+                aad=build_field_aad(entry.id, "password"),
+                upgrade_v1=upgrade_v1,
+            )
             entry.password = sealed
             modified = modified or changed
 
+        if entry.totp_secret:
+            sealed, changed = crypto.seal_if_plaintext(
+                entry.totp_secret,
+                aad=build_field_aad(entry.id, "totp_secret"),
+                upgrade_v1=upgrade_v1,
+            )
+            entry.totp_secret = sealed
+            modified = modified or changed
+
         if entry.two_fa_recovery:
-            sealed, changed = crypto.seal_if_plaintext(entry.two_fa_recovery)
+            sealed, changed = crypto.seal_if_plaintext(
+                entry.two_fa_recovery,
+                aad=build_field_aad(entry.id, "two_fa_recovery"),
+                upgrade_v1=upgrade_v1,
+            )
             entry.two_fa_recovery = sealed
             modified = modified or changed
 
+        qa_aad = build_field_aad(entry.id, "security_qa")
         for qa in entry.security_questions:
             if qa.answer:
-                sealed, changed = crypto.seal_if_plaintext(qa.answer)
+                sealed, changed = crypto.seal_if_plaintext(
+                    qa.answer,
+                    aad=qa_aad,
+                    upgrade_v1=upgrade_v1,
+                )
                 qa.answer = sealed
                 modified = modified or changed
+
+    # If any entry uses v2 encryption, ensure header verifier is also v2-protected
+    # so older v1-only binaries refuse to unlock instead of double-encrypting v2 tokens.
+    has_any_v2_field = any(
+        is_v2_encrypted_token(e.password)
+        or is_v2_encrypted_token(e.totp_secret)
+        or is_v2_encrypted_token(e.two_fa_recovery)
+        or any(is_v2_encrypted_token(qa.answer) for qa in e.security_questions)
+        for e in doc.entries
+    )
+    if (
+        has_any_v2_field
+        and doc.header.salt
+        and doc.header.verifier
+        and not is_v2_encrypted_token(doc.header.verifier)
+    ):
+        doc.header.verifier = crypto.encrypt_value(VERIFIER_PLAINTEXT, aad=VERIFIER_AAD)
+        doc.header.vault_version = max(doc.header.vault_version, 2)
+        modified = True
+
     return modified
 
 
 def decrypt_entry_for_view(entry: AccountEntry, crypto: CryptoEngine) -> AccountEntry:
-    """Return a copy of AccountEntry with sensitive fields decrypted for UI display."""
+    """Return a copy of AccountEntry with sensitive fields decrypted (verifying AAD on v2)."""
     copy_entry = entry.model_copy(deep=True)
-    copy_entry.password = crypto.decrypt_if_needed(copy_entry.password)
-    copy_entry.two_fa_recovery = crypto.decrypt_if_needed(copy_entry.two_fa_recovery)
+    eid = copy_entry.id or "unknown"
+    copy_entry.password = crypto.decrypt_if_needed(
+        copy_entry.password, aad=build_field_aad(eid, "password")
+    )
+    copy_entry.totp_secret = crypto.decrypt_if_needed(
+        copy_entry.totp_secret, aad=build_field_aad(eid, "totp_secret")
+    )
+    copy_entry.two_fa_recovery = crypto.decrypt_if_needed(
+        copy_entry.two_fa_recovery, aad=build_field_aad(eid, "two_fa_recovery")
+    )
+    qa_aad = build_field_aad(eid, "security_qa")
     for qa in copy_entry.security_questions:
-        qa.answer = crypto.decrypt_if_needed(qa.answer)
+        qa.answer = crypto.decrypt_if_needed(qa.answer, aad=qa_aad)
     return copy_entry
 
 
+def redact_entry_for_list(
+    entry: AccountEntry, crypto: Optional[CryptoEngine] = None
+) -> Dict[str, Any]:
+    """
+    Serialize non-secret metadata for UI list/detail rendering without exposing secrets.
+    Computes accurate boolean flags (`has_totp`, `has_two_fa`) for the unified 2FA/TOTP field.
+    """
+    raw_has_totp_field = bool(entry.totp_secret and entry.totp_secret.strip())
+    raw_has_two_fa_field = bool(entry.two_fa_recovery and entry.two_fa_recovery.strip())
+    has_totp = raw_has_totp_field
+    has_two_fa = raw_has_two_fa_field
+
+    if crypto is not None and crypto.is_unlocked and raw_has_two_fa_field:
+        try:
+            two_fa_plain = crypto.decrypt_if_needed(
+                entry.two_fa_recovery, aad=build_field_aad(entry.id, "two_fa_recovery")
+            )
+            extracted = extract_totp_from_text(two_fa_plain)
+            if extracted:
+                has_totp = True
+                # Only show separate bottom 2FA recovery card if there are extra recovery lines
+                # or a separate dedicated totp_secret was also present
+                has_two_fa = raw_has_totp_field or has_extra_recovery_beyond_totp(two_fa_plain)
+        except Exception:
+            pass
+
+    return {
+        "id": entry.id,
+        "category": entry.category,
+        "title": entry.title,
+        "platform": entry.platform,
+        "tags": list(entry.tags),
+        "favorite": bool(entry.favorite),
+        "username": entry.username,
+        "password": "",
+        "has_password": bool(entry.password and entry.password.strip()),
+        "phone": entry.phone,
+        "recovery_email": entry.recovery_email,
+        "url": entry.url,
+        "security_questions": [
+            {
+                "question": qa.question,
+                "answer": "",
+                "has_answer": bool(qa.answer and qa.answer.strip()),
+            }
+            for qa in entry.security_questions
+        ],
+        "totp_secret": "",
+        "has_totp": has_totp,
+        "two_fa_recovery": "",
+        "has_two_fa": has_two_fa,
+        "notes": entry.notes,
+        "custom_fields": dict(entry.custom_fields),
+        "updated_at": entry.updated_at,
+    }
+
+
+def _unwrap_if_already_encrypted(value: str, crypto: CryptoEngine, aad: bytes) -> str:
+    if not value:
+        return ""
+    if is_encrypted_token(value):
+        try:
+            return crypto.decrypt_if_needed(value, aad=aad)
+        except CryptoError:
+            return value
+    return value
+
+
 def encrypt_entry_for_storage(entry: AccountEntry, crypto: CryptoEngine) -> AccountEntry:
-    """Encrypt plaintext sensitive fields from UI form into ENC[v1:...] storage form."""
+    """Encrypt plaintext sensitive fields from UI form into AAD-bound ENC[v2:...] storage form."""
     stored = entry.model_copy(deep=True)
-    stored.password = crypto.encrypt_value(stored.password) if stored.password else ""
+    if not stored.id:
+        stored.id = generate_entry_id()
+    eid = stored.id
+    pwd_aad = build_field_aad(eid, "password")
+    totp_aad = build_field_aad(eid, "totp_secret")
+    twofa_aad = build_field_aad(eid, "two_fa_recovery")
+    qa_aad = build_field_aad(eid, "security_qa")
+
+    pwd_plain = _unwrap_if_already_encrypted(stored.password, crypto, pwd_aad)
+    totp_plain = _unwrap_if_already_encrypted(stored.totp_secret, crypto, totp_aad)
+    twofa_plain = _unwrap_if_already_encrypted(stored.two_fa_recovery, crypto, twofa_aad)
+
+    stored.password = crypto.encrypt_value(pwd_plain, aad=pwd_aad) if pwd_plain else ""
+    stored.totp_secret = crypto.encrypt_value(totp_plain, aad=totp_aad) if totp_plain else ""
     stored.two_fa_recovery = (
-        crypto.encrypt_value(stored.two_fa_recovery) if stored.two_fa_recovery else ""
+        crypto.encrypt_value(twofa_plain, aad=twofa_aad) if twofa_plain else ""
     )
+
     new_qas: List[SecurityQA] = []
     for qa in stored.security_questions:
         q = qa.question.strip()
-        a = qa.answer
-        if q or a:
+        a_plain = _unwrap_if_already_encrypted(qa.answer, crypto, qa_aad)
+        if q or a_plain:
             new_qas.append(
                 SecurityQA(
                     question=q,
-                    answer=crypto.encrypt_value(a) if a else "",
+                    answer=crypto.encrypt_value(a_plain, aad=qa_aad) if a_plain else "",
                 )
             )
     stored.security_questions = new_qas
@@ -153,7 +302,7 @@ def dumps_vault(doc: VaultDocument) -> str:
         f"# {doc.header.vault_name}",
         "",
         "> 本文件由 **MD-Vault** 本地维护，支持使用任意 Markdown 编辑器直接查阅与修改。",
-        "> `ENC[v1:...]` 为主密码（AES-256-GCM）加密字段；若你在外部编辑器直接填入明文密码，下次在客户端解锁后将自动加密落盘。",
+        "> `ENC[v2:...]` 为主密码（AES-256-GCM + AAD 绑定）加密字段；请保留条目下方的 `<!-- id: ... -->` 注释。若在外部直接填入明文密码，下次解锁将自动加密落盘。",
         "",
     ]
 
@@ -204,13 +353,21 @@ def dumps_vault(doc: VaultDocument) -> str:
                 lines.append(f"- **更新日期**: {entry.updated_at or now_timestamp()}")
                 lines.append("")
 
-                has_security = bool(entry.security_questions) or bool(entry.two_fa_recovery.strip())
+                has_security = (
+                    bool(entry.security_questions)
+                    or bool(entry.totp_secret.strip())
+                    or bool(entry.two_fa_recovery.strip())
+                )
                 if has_security:
                     lines.append("#### 密保与恢复信息")
                     for q_idx, qa in enumerate(entry.security_questions, start=1):
                         q_text = qa.question.strip() or f"问题 {q_idx}"
                         a_text = _wrap_inline_code(qa.answer.strip()) if qa.answer.strip() else ""
                         lines.append(f"- **密保问题 {q_idx}**: {q_text} :: {a_text}".rstrip())
+                    if entry.totp_secret.strip():
+                        lines.append(
+                            f"- **TOTP 密钥**: {_wrap_inline_code(entry.totp_secret.strip())}"
+                        )
                     if entry.two_fa_recovery.strip():
                         lines.append(
                             f"- **2FA / 恢复码**: {_wrap_inline_code(entry.two_fa_recovery.strip())}"
@@ -348,7 +505,12 @@ def loads_vault(markdown_text: str) -> VaultDocument:
         # Entry Subsections H4
         if line.startswith("#### "):
             sub_title = line[5:].strip()
-            if "密保" in sub_title or "恢复" in sub_title or "2FA" in sub_title:
+            if (
+                "密保" in sub_title
+                or "恢复" in sub_title
+                or "2FA" in sub_title.upper()
+                or "TOTP" in sub_title.upper()
+            ):
                 current_sub = "security"
             elif "备注" in sub_title or "说明" in sub_title:
                 current_sub = "notes"
@@ -393,6 +555,8 @@ def loads_vault(markdown_text: str) -> VaultDocument:
                             answer=_strip_single_backticks(a_part),
                         )
                     )
+                elif "TOTP" in key.upper() or "动态码" in key or "动态口令" in key:
+                    current_entry.totp_secret = _strip_single_backticks(raw_val)
                 elif "2FA" in key.upper() or "恢复码" in key:
                     current_entry.two_fa_recovery = _strip_single_backticks(raw_val)
                 else:
@@ -408,6 +572,8 @@ def loads_vault(markdown_text: str) -> VaultDocument:
                     current_entry.username = _strip_single_backticks(raw_val)
                 elif key in ("登录密码", "密码"):
                     current_entry.password = _strip_single_backticks(raw_val)
+                elif "TOTP" in key.upper() or key in ("动态码密钥", "动态口令"):
+                    current_entry.totp_secret = _strip_single_backticks(raw_val)
                 elif key in ("绑定手机", "手机号", "手机"):
                     current_entry.phone = _strip_single_backticks(raw_val)
                 elif key in ("辅助邮箱", "绑定邮箱", "恢复邮箱"):

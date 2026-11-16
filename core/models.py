@@ -35,6 +35,7 @@ class AccountEntry(BaseModel):
     recovery_email: str = ""
     url: str = ""
     security_questions: List[SecurityQA] = Field(default_factory=list)
+    totp_secret: str = ""
     two_fa_recovery: str = ""
     notes: str = ""
     custom_fields: Dict[str, str] = Field(default_factory=dict)

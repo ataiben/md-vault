@@ -10,15 +10,22 @@
     tagCounts: {},
     savedTags: {},
     editingCustomFields: null,
-    filterType: "all", // "all" | "favorite" | "category"
+    filterType: "all", // "all" | "favorite" | "health" | "category"
     filterCategory: "",
     filterTag: "",
     searchQuery: "",
     selectedId: null,
     mode: "view", // "view" | "edit"
-    revealedFields: new Set(),
+    revealedSecrets: new Map(),
+    totpTimer: null,
+    totpState: null,
+    healthReport: null,
     appVersion: "0.2.1",
     autoCheckUpdates: true,
+    autoLockMinutes: 15,
+    lockOnMinimize: false,
+    lastActivityAt: Date.now(),
+    lockingInProgress: false,
     updateInfo: null,
     startupUpdateChecked: false,
   };
@@ -77,7 +84,9 @@
   }
 
   // ==================== MODAL HELPER ====================
-  function openModal({ title, bodyHtml, footerButtons = [] }) {
+  function openModal({ title, bodyHtml, footerButtons = [], wide = false }) {
+    const card = $("modal-card");
+    if (card) card.classList.toggle("wide", Boolean(wide));
     $("modal-title").textContent = title;
     $("modal-body").innerHTML = bodyHtml;
     const footer = $("modal-footer");
@@ -97,8 +106,325 @@
 
   function closeModal() {
     $("modal-overlay").classList.add("hidden");
+    const card = $("modal-card");
+    if (card) card.classList.remove("wide");
     $("modal-body").innerHTML = "";
     $("modal-footer").innerHTML = "";
+  }
+
+  // ==================== SECURITY, AUTO-LOCK & CONFLICT HELPERS ====================
+  function isWorkspaceUnlocked() {
+    const ws = $("app-workspace");
+    return Boolean(ws && !ws.classList.contains("hidden"));
+  }
+
+  function syncAutoLockLabel() {
+    const labelEl = $("settings-autolock-label");
+    if (!labelEl) return;
+    if (!state.autoLockMinutes || state.autoLockMinutes <= 0) {
+      labelEl.textContent = state.lockOnMinimize ? "仅最小化" : "关闭";
+    } else if (state.autoLockMinutes >= 60 && state.autoLockMinutes % 60 === 0) {
+      labelEl.textContent = `${state.autoLockMinutes / 60} 小时`;
+    } else {
+      labelEl.textContent = `${state.autoLockMinutes} 分钟`;
+    }
+  }
+
+  function clearTotpIntervalOnly() {
+    if (state.totpTimer) {
+      clearInterval(state.totpTimer);
+      state.totpTimer = null;
+    }
+  }
+
+  function stopTotpTimer() {
+    clearTotpIntervalOnly();
+    state.totpState = null;
+  }
+
+  function formatTotpCode(code) {
+    const s = String(code || "").trim();
+    if (s.length === 6) return `${s.slice(0, 3)} ${s.slice(3)}`;
+    if (s.length === 8) return `${s.slice(0, 4)} ${s.slice(4)}`;
+    return s;
+  }
+
+  function syncTotpDomElements() {
+    const t = state.totpState;
+    if (!t || t.noTotp) return;
+    const codeEl = $("totp-code-val");
+    const countEl = $("totp-countdown-val");
+    const fillEl = $("totp-progress-fill");
+    if (!codeEl || !countEl || !fillEl) return;
+    if (t.error) {
+      codeEl.textContent = "配置无效";
+      codeEl.classList.add("expiring");
+      countEl.textContent = "请检查密钥";
+      fillEl.style.width = "0%";
+      return;
+    }
+    const rem = Math.max(0, Number(t.remaining) || 0);
+    const period = Math.max(1, Number(t.period) || 30);
+    const expiring = rem <= 5;
+    codeEl.textContent = formatTotpCode(t.code);
+    codeEl.classList.toggle("expiring", expiring);
+    countEl.textContent = `${rem}s 后刷新`;
+    countEl.classList.toggle("expiring", expiring);
+    fillEl.style.width = `${Math.min(100, Math.max(0, (rem / period) * 100))}%`;
+    fillEl.classList.toggle("expiring", expiring);
+  }
+
+  function ensureTotpInterval(entryId) {
+    if (state.totpTimer) return;
+    state.totpTimer = setInterval(() => {
+      if (
+        !isWorkspaceUnlocked() ||
+        state.mode !== "view" ||
+        state.filterType === "health" ||
+        state.selectedId !== entryId
+      ) {
+        stopTotpTimer();
+        return;
+      }
+      if (!state.totpState || state.totpState.error || state.totpState.noTotp) {
+        clearTotpIntervalOnly();
+        return;
+      }
+      state.totpState.remaining = (Number(state.totpState.remaining) || 1) - 1;
+      if (state.totpState.remaining <= 0) {
+        refreshTotpFromBackend(entryId);
+      } else {
+        syncTotpDomElements();
+      }
+    }, 1000);
+  }
+
+  async function refreshTotpFromBackend(entryId) {
+    try {
+      const res = await api().get_entry_totp(entryId);
+      if (state.selectedId !== entryId || state.mode !== "view" || state.filterType === "health") {
+        return;
+      }
+      if (res && res.ok) {
+        const hadLiveDom = Boolean($("totp-code-val"));
+        state.totpState = {
+          entryId,
+          code: res.code,
+          remaining: res.remaining,
+          period: res.period,
+          digits: res.digits,
+          source: res.source || "totp_secret",
+          noTotp: false,
+          error: null,
+        };
+        ensureTotpInterval(entryId);
+        if (!hadLiveDom) {
+          renderRightPane();
+        } else {
+          syncTotpDomElements();
+        }
+      } else if (res && res.no_totp) {
+        clearTotpIntervalOnly();
+        state.totpState = { entryId, noTotp: true, error: null };
+      } else {
+        clearTotpIntervalOnly();
+        state.totpState = {
+          entryId,
+          noTotp: false,
+          error: (res && res.error) || "无效密钥",
+        };
+        syncTotpDomElements();
+      }
+    } catch (_) {
+      // Ignore transient errors while locked
+    }
+  }
+
+  function startTotpLoop(entryId) {
+    stopTotpTimer();
+    refreshTotpFromBackend(entryId);
+    ensureTotpInterval(entryId);
+  }
+
+  async function updateEditorTotpPreview() {
+    const inputEl = $("field-2fa");
+    const previewEl = $("totp-editor-preview");
+    if (!inputEl || !previewEl) return;
+    const val = inputEl.value.trim();
+    if (!val) {
+      previewEl.classList.add("hidden");
+      previewEl.innerHTML = "";
+      return;
+    }
+    try {
+      const res = await api().preview_totp_secret(val);
+      if ($("field-2fa").value.trim() !== val) return;
+      previewEl.classList.remove("hidden");
+      if (res && res.ok) {
+        previewEl.innerHTML = `<span style="color:var(--success);font-weight:600">✓ 已识别 TOTP 动态码密钥 · 实时验证码：${escapeHtml(
+          formatTotpCode(res.code)
+        )}</span><span>每 ${Number(res.period) || 30}s 刷新（剩余 ${Number(res.remaining) || 0}s）</span>`;
+      } else if (res && res.invalid_uri) {
+        previewEl.innerHTML = `<span style="color:var(--danger);font-weight:600">✕ ${escapeHtml(
+          res.error || "otpauth:// 链接格式无效"
+        )}</span><span>请检查链接中的 secret 参数</span>`;
+      } else {
+        previewEl.innerHTML = `<span style="color:var(--text-muted)">ℹ 将作为加密备用恢复码保存（如需自动生成 6 位动态码，可填入 Base32 密钥或 otpauth:// 链接）</span>`;
+      }
+    } catch (_) {
+      previewEl.classList.add("hidden");
+    }
+  }
+
+  async function updateStrengthMeter(password, wrapId, fillId, hintId) {
+    const wrap = $(wrapId);
+    const fill = $(fillId);
+    const hint = $(hintId);
+    if (!wrap || !fill || !hint) return;
+    if (!password) {
+      wrap.classList.add("hidden");
+      return;
+    }
+    wrap.classList.remove("hidden");
+    try {
+      const res = await api().check_password_strength(password, "");
+      if (!res || !res.ok) return;
+      const pctMap = { 0: 14, 1: 32, 2: 58, 3: 82, 4: 100 };
+      const colorMap = {
+        0: "var(--danger)",
+        1: "var(--danger)",
+        2: "var(--warning)",
+        3: "var(--accent)",
+        4: "var(--success)",
+      };
+      const sc = Number(res.score) || 0;
+      fill.style.width = `${pctMap[sc] || 20}%`;
+      fill.style.backgroundColor = colorMap[sc] || "var(--accent)";
+      const warnText =
+        res.warnings && res.warnings.length > 0
+          ? res.warnings[0]
+          : `约 ${res.entropy_bits} bits 熵值`;
+      hint.innerHTML = `<span style="color:${colorMap[sc]};font-weight:600">强度：${escapeHtml(
+        res.label
+      )}</span><span>${escapeHtml(warnText)}</span>`;
+    } catch (_) {
+      wrap.classList.add("hidden");
+    }
+  }
+
+  function clearSensitiveDomInputs() {
+    [
+      "field-password",
+      "field-2fa",
+      "unlock-password",
+      "create-password",
+      "create-password-confirm",
+    ].forEach((id) => {
+      const el = $(id);
+      if (el) el.value = "";
+    });
+    const qaBox = $("qa-rows-container");
+    if (qaBox) qaBox.innerHTML = "";
+    const detailEl = $("detail-view");
+    if (detailEl) detailEl.innerHTML = "";
+    const healthEl = $("health-view");
+    if (healthEl) healthEl.innerHTML = "";
+  }
+
+  async function lockWorkspaceWithReason(reason = "密码库已安全锁定") {
+    if (state.lockingInProgress) return;
+    state.lockingInProgress = true;
+    try {
+      stopTotpTimer();
+      closeModal();
+      closeSettingsPopover();
+      clearSensitiveDomInputs();
+      const status = await api().lock_vault();
+      state.entries = [];
+      state.revealedSecrets.clear();
+      state.healthReport = null;
+      state.mode = "view";
+      renderAuthStatus(status);
+      if (reason) showToast(reason, "info");
+    } finally {
+      state.lockingInProgress = false;
+    }
+  }
+
+  function touchActivity() {
+    if (isWorkspaceUnlocked() && !state.lockingInProgress) {
+      const mins = Number(state.autoLockMinutes) || 0;
+      if (mins > 0 && Date.now() - state.lastActivityAt >= mins * 60 * 1000) {
+        checkIdleAutoLock();
+        return;
+      }
+    }
+    const now = Date.now();
+    if (now - state.lastActivityAt > 1000) {
+      state.lastActivityAt = now;
+    }
+  }
+
+  function checkIdleAutoLock() {
+    if (!isWorkspaceUnlocked() || state.lockingInProgress) return;
+    const mins = Number(state.autoLockMinutes) || 0;
+    if (mins <= 0) return;
+    const elapsedMs = Date.now() - state.lastActivityAt;
+    if (elapsedMs >= mins * 60 * 1000) {
+      lockWorkspaceWithReason(`已超过 ${mins} 分钟未操作，密码库已自动安全锁定`);
+    }
+  }
+
+  function openConflictModal(retryWithMode) {
+    const syncBtn = $("btn-sync-external");
+    if (syncBtn) syncBtn.classList.remove("hidden");
+
+    openModal({
+      title: "⚠️ 检测到外部文件修改冲突",
+      wide: true,
+      bodyHtml: `
+        <p style="font-size:13px;line-height:1.65;color:var(--text-primary);margin-bottom:10px">
+          本地 <code>.md</code> 密码库文件在您编辑期间已被外部程序（如 Obsidian、VS Code 或云同步盘）更新。为防止直接覆盖外部改动，本次保存已暂停。
+        </p>
+        <div style="font-size:12.5px;line-height:1.6;color:var(--text-secondary);background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:10px 12px">
+          <div>• <strong>智能合并并保存（推荐）</strong>：按条目 ID 自动保留外部新增/修改的其他账号，同时写入您本次修改。</div>
+          <div>• <strong>强制覆盖文件</strong>：先将外部版本自动备份至 <code>.vault_backups/</code>，再写入当前窗口数据。</div>
+          <div>• <strong>重新加载外部版本</strong>：放弃本次未落盘修改，同步读取磁盘最新文件。</div>
+        </div>
+      `,
+      footerButtons: [
+        {
+          label: "重新加载外部版本",
+          className: "btn-ghost",
+          onClick: async () => {
+            closeModal();
+            const res = await api().reload_from_disk();
+            if (res.ok) {
+              showToast("已重新加载外部最新 .md 文件内容", "info");
+              applyUnlockedState(res, state.selectedId);
+            } else {
+              showToast(res.error || "重新加载失败", "error");
+            }
+          },
+        },
+        {
+          label: "强制覆盖文件",
+          className: "btn-danger-ghost",
+          onClick: async () => {
+            closeModal();
+            await retryWithMode("overwrite");
+          },
+        },
+        {
+          label: "智能合并并保存",
+          className: "btn-primary",
+          onClick: async () => {
+            closeModal();
+            await retryWithMode("merge");
+          },
+        },
+      ],
+    });
   }
 
   // ==================== BOOT & AUTH ====================
@@ -191,10 +517,17 @@
     if (typeof status.auto_check_updates === "boolean") {
       state.autoCheckUpdates = status.auto_check_updates;
     }
+    if (typeof status.auto_lock_minutes === "number") {
+      state.autoLockMinutes = status.auto_lock_minutes;
+    }
+    if (typeof status.lock_on_minimize === "boolean") {
+      state.lockOnMinimize = status.lock_on_minimize;
+    }
     state.vaultPath = status.vault_path || "";
     state.vaultName = status.vault_name || "我的账号密码库";
     $("auth-vault-path").textContent = state.vaultPath;
     renderUpdateIndicators();
+    syncAutoLockLabel();
 
     $("auth-screen").classList.remove("hidden");
     $("app-workspace").classList.add("hidden");
@@ -212,6 +545,7 @@
       $("create-form").classList.remove("hidden");
       $("create-password").value = "";
       $("create-password-confirm").value = "";
+      if ($("create-pwd-meter")) $("create-pwd-meter").classList.add("hidden");
       setTimeout(() => $("create-password").focus(), 60);
     }
   }
@@ -221,13 +555,22 @@
     if (typeof res.auto_check_updates === "boolean") {
       state.autoCheckUpdates = res.auto_check_updates;
     }
+    if (typeof res.auto_lock_minutes === "number") {
+      state.autoLockMinutes = res.auto_lock_minutes;
+    }
+    if (typeof res.lock_on_minimize === "boolean") {
+      state.lockOnMinimize = res.lock_on_minimize;
+    }
+    state.lastActivityAt = Date.now();
     state.vaultName = res.vault_name || "我的账号密码库";
     state.vaultPath = res.vault_path || "";
     state.categories = res.categories || [];
     state.entries = res.entries || [];
     state.tagCounts = res.tag_counts || {};
     state.savedTags = res.saved_tags || {};
+    state.healthReport = null;
     renderUpdateIndicators();
+    syncAutoLockLabel();
 
     $("auth-screen").classList.add("hidden");
     $("app-workspace").classList.remove("hidden");
@@ -241,18 +584,20 @@
     }
 
     if (res.auto_sealed) {
-      showToast("已识别外部编辑器填写的明文密码，并自动使用主密码加密落盘", "success");
+      showToast("已识别外部编辑器填写的明文凭据，并自动使用 AES-256-GCM 加密落盘", "success");
     }
 
     if (preferredId && state.entries.some((e) => e.id === preferredId)) {
       state.selectedId = preferredId;
+      if (state.filterType === "health") state.filterType = "all";
     } else if (!state.selectedId || !state.entries.some((e) => e.id === state.selectedId)) {
       const visible = getFilteredEntries();
       state.selectedId = visible.length > 0 ? visible[0].id : null;
     }
 
     state.mode = "view";
-    state.revealedFields.clear();
+    state.revealedSecrets.clear();
+    stopTotpTimer();
     renderWorkspace();
   }
 
@@ -290,9 +635,23 @@
     renderRightPane();
   }
 
+  function syncHealthSidebarBadge() {
+    const badge = $("count-health");
+    if (!badge) return;
+    if (!state.healthReport || !state.healthReport.summary) {
+      badge.classList.add("hidden");
+      return;
+    }
+    const issues = Number(state.healthReport.summary.total_issues) || 0;
+    badge.textContent = String(issues);
+    badge.classList.remove("hidden");
+    badge.classList.toggle("warn", issues > 0);
+  }
+
   function renderSidebar() {
     $("count-all").textContent = state.entries.length;
     $("count-fav").textContent = state.entries.filter((e) => e.favorite).length;
+    syncHealthSidebarBadge();
 
     document.querySelectorAll("#quick-nav-list .nav-item").forEach((li) => {
       const ft = li.getAttribute("data-filter-type");
@@ -337,7 +696,10 @@
         if (!filtered.some((e) => e.id === state.selectedId)) {
           state.selectedId = filtered.length ? filtered[0].id : null;
         }
-        if (state.mode === "view") state.revealedFields.clear();
+        if (state.mode === "view") {
+          state.revealedSecrets.clear();
+          stopTotpTimer();
+        }
         renderWorkspace();
       });
       catUl.appendChild(li);
@@ -381,6 +743,7 @@
         btn.className = `tag-pill${state.filterTag === tag ? " active" : ""}`;
         btn.textContent = `${tag} · ${cnt}`;
         btn.addEventListener("click", () => {
+          if (state.filterType === "health") state.filterType = "all";
           state.filterTag = state.filterTag === tag ? "" : tag;
           const filtered = getFilteredEntries();
           if (!filtered.some((e) => e.id === state.selectedId)) {
@@ -397,6 +760,7 @@
     const filtered = getFilteredEntries();
     let label = "全部账号";
     if (state.filterType === "favorite") label = "⭐ 星标常用";
+    if (state.filterType === "health") label = "🛡 安全体检 · 全部账号";
     if (state.filterType === "category") label = `📁 ${state.filterCategory}`;
     if (state.filterTag) label += ` · #${state.filterTag}`;
     $("list-filter-label").textContent = label;
@@ -417,7 +781,8 @@
 
     filtered.forEach((entry) => {
       const card = document.createElement("div");
-      card.className = `account-card${entry.id === state.selectedId ? " active" : ""}`;
+      const isSelected = state.filterType !== "health" && entry.id === state.selectedId;
+      card.className = `account-card${isSelected ? " active" : ""}`;
       const tagsHtml = (entry.tags || [])
         .slice(0, 4)
         .map((t) => `<span class="mini-tag">${escapeHtml(t)}</span>`)
@@ -435,9 +800,14 @@
         </div>
       `;
       card.addEventListener("click", () => {
+        if (state.filterType === "health") {
+          state.filterType = "all";
+          renderSidebar();
+        }
         state.selectedId = entry.id;
         state.mode = "view";
-        state.revealedFields.clear();
+        state.revealedSecrets.clear();
+        stopTotpTimer();
         renderAccountList();
         renderRightPane();
       });
@@ -445,21 +815,286 @@
     });
   }
 
+  async function openEditorById(entryId, isDuplicate = false, focusFieldId = "field-title") {
+    const res = await api().get_entry_for_edit(entryId);
+    if (!res || !res.ok || !res.entry) {
+      showToast((res && res.error) || "读取账号加密详情失败", "error");
+      return;
+    }
+    openEditor(res.entry, isDuplicate, focusFieldId);
+    if (isDuplicate) {
+      showToast("已解密并复制当前账号内容，修改差异项后点击保存即可创建", "info");
+    }
+  }
+
+  async function renderHealthDashboard(forceRefresh = false) {
+    const healthEl = $("health-view");
+    if (!healthEl) return;
+
+    if (forceRefresh || !state.healthReport) {
+      healthEl.innerHTML = `<div style="padding:28px;color:var(--text-muted);font-size:13.5px">正在本地离线分析密码熵值、复用特征与 2FA 覆盖率...</div>`;
+      const res = await api().get_password_health_report(180);
+      if (!res || !res.ok || !res.report) {
+        healthEl.innerHTML = `<div class="form-error">${escapeHtml(
+          (res && res.error) || "密码安全体检失败"
+        )}</div>`;
+        return;
+      }
+      state.healthReport = res.report;
+      syncHealthSidebarBadge();
+    }
+
+    const rpt = state.healthReport;
+    const sum = rpt.summary || {};
+    const score = Number(rpt.score) || 0;
+    const scoreColor =
+      score >= 85 ? "var(--success)" : score >= 60 ? "var(--warning)" : "var(--danger)";
+    const scoreDesc =
+      score >= 85
+        ? "整体凭据健康状况良好，请继续保持独立强密码与双重认证习惯。"
+        : score >= 60
+        ? "存在部分复用密码或弱口令风险，建议优先处理下方高危提醒。"
+        : "检测到较多共用密码或高危弱口令，建议立即逐项使用密码生成器更换。";
+
+    const reusedHtml =
+      (rpt.reused_groups || []).length === 0
+        ? `<div class="health-issue-row"><span style="font-size:12.5px;color:var(--success)">✅ 未发现多账号共用同一密码</span></div>`
+        : (rpt.reused_groups || [])
+            .map(
+              (grp) => `
+              <div class="health-cluster-box">
+                <span class="health-cluster-badge">同一密码被 ${grp.count} 个账号共用</span>
+                ${(grp.entries || [])
+                  .map(
+                    (it) => `
+                    <div class="health-issue-row" style="padding-left:0;padding-right:0">
+                      <div class="health-issue-main">
+                        <div class="health-issue-title">${escapeHtml(it.title)}</div>
+                        <div class="health-issue-sub">${escapeHtml(it.category)}${
+                      it.username ? ` · ${escapeHtml(it.username)}` : ""
+                    }</div>
+                      </div>
+                      <div class="field-ops">
+                        <button type="button" class="btn btn-ghost btn-xs btn-health-view" data-id="${escapeHtml(
+                          it.id
+                        )}">查看</button>
+                        <button type="button" class="btn btn-primary btn-xs btn-health-edit" data-id="${escapeHtml(
+                          it.id
+                        )}">去改密</button>
+                      </div>
+                    </div>`
+                  )
+                  .join("")}
+              </div>`
+            )
+            .join("");
+
+    const weakHtml =
+      (rpt.weak_entries || []).length === 0
+        ? `<div class="health-issue-row"><span style="font-size:12.5px;color:var(--success)">✅ 未发现弱口令或过短密码</span></div>`
+        : (rpt.weak_entries || [])
+            .map(
+              (it) => `
+              <div class="health-issue-row">
+                <div class="health-issue-main">
+                  <div class="health-issue-title">${escapeHtml(it.title)} <span style="font-size:11.5px;color:var(--danger);font-weight:500">· ${escapeHtml(
+                it.strength_label
+              )} (${it.length} 位)</span></div>
+                  <div class="health-issue-sub">${escapeHtml(
+                    (it.reasons || []).join("；") || "建议提升密码长度与字符复杂度"
+                  )}</div>
+                </div>
+                <div class="field-ops">
+                  <button type="button" class="btn btn-ghost btn-xs btn-health-view" data-id="${escapeHtml(
+                    it.id
+                  )}">查看</button>
+                  <button type="button" class="btn btn-primary btn-xs btn-health-edit" data-id="${escapeHtml(
+                    it.id
+                  )}">去改密</button>
+                </div>
+              </div>`
+            )
+            .join("");
+
+    const no2faHtml =
+      (rpt.unprotected_2fa_entries || []).length === 0
+        ? `<div class="health-issue-row"><span style="font-size:12.5px;color:var(--success)">✅ 所有已设密账号均已记录 TOTP 动态码或 2FA 恢复码</span></div>`
+        : (rpt.unprotected_2fa_entries || [])
+            .map(
+              (it) => `
+              <div class="health-issue-row">
+                <div class="health-issue-main">
+                  <div class="health-issue-title">${escapeHtml(it.title)}</div>
+                  <div class="health-issue-sub">${escapeHtml(it.category)}${
+                it.username ? ` · ${escapeHtml(it.username)}` : ""
+              } · 未绑定 TOTP 或 2FA 恢复码</div>
+                </div>
+                <div class="field-ops">
+                  <button type="button" class="btn btn-ghost btn-xs btn-health-edit" data-id="${escapeHtml(
+                    it.id
+                  )}">补充 2FA</button>
+                </div>
+              </div>`
+            )
+            .join("");
+
+    const staleHtml =
+      (rpt.stale_entries || []).length === 0
+        ? `<div class="health-issue-row"><span style="font-size:12.5px;color:var(--success)">✅ 暂无超过 ${
+            rpt.stale_threshold_days || 180
+          } 天未更新的密码记录</span></div>`
+        : (rpt.stale_entries || [])
+            .map(
+              (it) => `
+              <div class="health-issue-row">
+                <div class="health-issue-main">
+                  <div class="health-issue-title">${escapeHtml(it.title)}</div>
+                  <div class="health-issue-sub">距上次更新已 ${it.age_days} 天（${escapeHtml(
+                it.updated_at
+              )}）</div>
+                </div>
+                <div class="field-ops">
+                  <button type="button" class="btn btn-ghost btn-xs btn-health-edit" data-id="${escapeHtml(
+                    it.id
+                  )}">轮换密码</button>
+                </div>
+              </div>`
+            )
+            .join("");
+
+    healthEl.innerHTML = `
+      <div class="detail-top">
+        <div>
+          <div class="detail-breadcrumb">🛡 纯本地离线安全审计 · 零联网零上传</div>
+          <h2 class="detail-title">账号密码安全体检报告</h2>
+        </div>
+        <div class="detail-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-health-refresh">↻ 重新扫描</button>
+        </div>
+      </div>
+
+      <div class="health-hero">
+        <div>
+          <div style="font-size:12.5px;color:var(--text-secondary);margin-bottom:4px">密码库综合安全评分（共检测 ${
+            sum.total_entries || 0
+          } 条账号）</div>
+          <div style="font-size:13px;color:var(--text-primary);line-height:1.5">${escapeHtml(
+            scoreDesc
+          )}</div>
+        </div>
+        <div class="health-score-box">
+          <span class="health-score-num" style="color:${scoreColor}">${score}</span>
+          <span class="health-score-unit">/ 100 分</span>
+        </div>
+      </div>
+
+      <div class="health-stats-grid">
+        <div class="health-stat-card">
+          <div class="health-stat-val" style="color:${
+            sum.reused_entry_count > 0 ? "var(--danger)" : "var(--success)"
+          }">${sum.reused_entry_count || 0}</div>
+          <div class="health-stat-label">重复共用密码账号</div>
+        </div>
+        <div class="health-stat-card">
+          <div class="health-stat-val" style="color:${
+            sum.weak_count > 0 ? "var(--danger)" : "var(--success)"
+          }">${sum.weak_count || 0}</div>
+          <div class="health-stat-label">弱口令 / 长度不足</div>
+        </div>
+        <div class="health-stat-card">
+          <div class="health-stat-val" style="color:${
+            sum.unprotected_2fa_count > 0 ? "var(--warning)" : "var(--success)"
+          }">${sum.unprotected_2fa_count || 0}</div>
+          <div class="health-stat-label">未配置 2FA / TOTP</div>
+        </div>
+        <div class="health-stat-card">
+          <div class="health-stat-val" style="color:${
+            sum.stale_count > 0 ? "var(--warning)" : "var(--success)"
+          }">${sum.stale_count || 0}</div>
+          <div class="health-stat-label">超 180 天未更新</div>
+        </div>
+      </div>
+
+      <div class="info-panel">
+        <div class="info-panel-header"><span>🚨 重复共用密码（高危：一处撞库危及多处）</span></div>
+        ${reusedHtml}
+      </div>
+
+      <div class="info-panel">
+        <div class="info-panel-header"><span>⚠️ 弱口令与高风险密码</span></div>
+        ${weakHtml}
+      </div>
+
+      <div class="info-panel">
+        <div class="info-panel-header"><span>🔐 未记录双重认证 (TOTP / 2FA 恢复码)</span></div>
+        ${no2faHtml}
+      </div>
+
+      <div class="info-panel">
+        <div class="info-panel-header"><span>⏳ 长期未轮换密码记录</span></div>
+        ${staleHtml}
+      </div>
+    `;
+
+    const refreshBtn = $("btn-health-refresh");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => renderHealthDashboard(true));
+    }
+
+    healthEl.querySelectorAll(".btn-health-view").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const targetId = btn.getAttribute("data-id");
+        state.selectedId = targetId;
+        state.filterType = "all";
+        state.mode = "view";
+        state.revealedSecrets.clear();
+        stopTotpTimer();
+        renderWorkspace();
+      });
+    });
+
+    healthEl.querySelectorAll(".btn-health-edit").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const targetId = btn.getAttribute("data-id");
+        state.selectedId = targetId;
+        await openEditorById(targetId, false);
+      });
+    });
+  }
+
   function renderRightPane() {
     const emptyEl = $("detail-empty");
     const viewEl = $("detail-view");
+    const healthEl = $("health-view");
     const editorEl = $("entry-editor");
 
     if (state.mode === "edit") {
+      stopTotpTimer();
       emptyEl.classList.add("hidden");
       viewEl.classList.add("hidden");
+      if (healthEl) healthEl.classList.add("hidden");
       editorEl.classList.remove("hidden");
       return;
     }
 
     editorEl.classList.add("hidden");
+
+    if (state.filterType === "health") {
+      stopTotpTimer();
+      emptyEl.classList.add("hidden");
+      viewEl.classList.add("hidden");
+      if (healthEl) {
+        healthEl.classList.remove("hidden");
+        renderHealthDashboard(false);
+      }
+      return;
+    }
+
+    if (healthEl) healthEl.classList.add("hidden");
+
     const entry = state.entries.find((e) => e.id === state.selectedId);
     if (!entry) {
+      stopTotpTimer();
       emptyEl.classList.remove("hidden");
       viewEl.classList.add("hidden");
       return;
@@ -468,8 +1103,13 @@
     emptyEl.classList.add("hidden");
     viewEl.classList.remove("hidden");
 
-    const isPwdShown = state.revealedFields.has("pwd");
-    const is2faShown = state.revealedFields.has("2fa");
+    const hasPassword = Boolean(entry.has_password || entry.password);
+    const hasTotp = Boolean(entry.has_totp);
+    const hasTwoFa = Boolean(entry.has_two_fa || entry.two_fa_recovery);
+
+    const isPwdShown = state.revealedSecrets.has("password");
+    const isTotpSeedShown = state.revealedSecrets.has("totp_secret");
+    const is2faShown = state.revealedSecrets.has("2fa");
 
     const tagsRowHtml =
       entry.tags && entry.tags.length
@@ -493,29 +1133,69 @@
       )
       .join("");
 
+    const cachedTotp =
+      state.totpState && state.totpState.entryId === entry.id ? state.totpState : null;
+    const showLiveTotp = Boolean(
+      hasTotp || (cachedTotp && !cachedTotp.noTotp && (cachedTotp.code || cachedTotp.error))
+    );
+
+    const totpRowHtml = showLiveTotp
+      ? `
+        <div class="field-row" id="totp-live-row">
+          <div class="field-meta">
+            <div class="field-label">双重认证动态验证码 (TOTP · RFC 6238)</div>
+            <div class="totp-live-wrap">
+              <span class="totp-code-display selectable" id="totp-code-val">••• •••</span>
+              <span class="totp-countdown-pill" id="totp-countdown-val">计算中...</span>
+            </div>
+            <div class="totp-progress-track">
+              <div class="totp-progress-fill" id="totp-progress-fill" style="width:100%"></div>
+            </div>
+            ${
+              isTotpSeedShown
+                ? `<div class="field-value mono selectable" style="margin-top:6px;font-size:12px;color:var(--text-secondary)">密钥种子：${escapeHtml(
+                    state.revealedSecrets.get("totp_secret")
+                  )}</div>`
+                : ""
+            }
+          </div>
+          <div class="field-ops">
+            <button type="button" class="btn btn-ghost btn-xs reveal-trigger" data-field-key="totp_secret">${
+              isTotpSeedShown ? "隐藏密钥" : "显示密钥"
+            }</button>
+            <button type="button" class="btn btn-primary btn-xs" id="btn-copy-totp">复制动态码</button>
+          </div>
+        </div>
+      `
+      : "";
+
     const hasSecurity =
-      (entry.security_questions && entry.security_questions.length > 0) ||
-      Boolean(entry.two_fa_recovery);
+      (entry.security_questions && entry.security_questions.length > 0) || hasTwoFa;
 
     let securityPanelHtml = "";
     if (hasSecurity) {
       const qaHtml = (entry.security_questions || [])
         .map((qa, idx) => {
           const key = `qa_${idx}`;
-          const shown = state.revealedFields.has(key);
+          const hasAns = Boolean(qa.has_answer || qa.answer);
+          const shown = state.revealedSecrets.has(key);
           return `
             <div class="field-row">
               <div class="field-meta">
                 <div class="field-label">密保问题 ${idx + 1}：${escapeHtml(qa.question)}</div>
                 <div class="field-value mono selectable">${
-                  qa.answer ? (shown ? escapeHtml(qa.answer) : "••••••••••••") : "<span style='color:var(--text-muted)'>未填写答案</span>"
+                  hasAns
+                    ? shown
+                      ? escapeHtml(state.revealedSecrets.get(key))
+                      : "••••••••••••"
+                    : "<span style='color:var(--text-muted)'>未填写答案</span>"
                 }</div>
               </div>
               ${
-                qa.answer
+                hasAns
                   ? `<div class="field-ops">
-                      <button type="button" class="btn btn-ghost btn-xs reveal-trigger" data-reveal-key="${key}">${shown ? "隐藏" : "显示"}</button>
-                      <button type="button" class="btn btn-ghost btn-xs copy-trigger" data-copy="${escapeHtml(qa.answer)}" data-secret="1">复制答案</button>
+                      <button type="button" class="btn btn-ghost btn-xs reveal-trigger" data-field-key="${key}">${shown ? "隐藏" : "显示"}</button>
+                      <button type="button" class="btn btn-ghost btn-xs secret-copy-trigger" data-field-key="${key}">复制答案</button>
                     </div>`
                   : ""
               }
@@ -524,18 +1204,18 @@
         })
         .join("");
 
-      const twoFaHtml = entry.two_fa_recovery
+      const twoFaHtml = hasTwoFa
         ? `
           <div class="field-row">
             <div class="field-meta">
-              <div class="field-label">2FA 密钥 / 备用恢复码（AES-256-GCM 加密存储）</div>
+              <div class="field-label">2FA 密钥 / 备用恢复码（AES-256-GCM 绑定上下文加密）</div>
               <div class="field-value mono selectable" style="white-space:pre-wrap">${
-                is2faShown ? escapeHtml(entry.two_fa_recovery) : "••••-••••-••••-••••"
+                is2faShown ? escapeHtml(state.revealedSecrets.get("2fa")) : "••••-••••-••••-••••"
               }</div>
             </div>
             <div class="field-ops">
-              <button type="button" class="btn btn-ghost btn-xs reveal-trigger" data-reveal-key="2fa">${is2faShown ? "隐藏" : "显示"}</button>
-              <button type="button" class="btn btn-ghost btn-xs copy-trigger" data-copy="${escapeHtml(entry.two_fa_recovery)}" data-secret="1">复制恢复码</button>
+              <button type="button" class="btn btn-ghost btn-xs reveal-trigger" data-field-key="2fa">${is2faShown ? "隐藏" : "显示"}</button>
+              <button type="button" class="btn btn-ghost btn-xs secret-copy-trigger" data-field-key="2fa">复制恢复码</button>
             </div>
           </div>
         `
@@ -605,24 +1285,25 @@
         }
         <div class="field-row">
           <div class="field-meta">
-            <div class="field-label">登录密码（落盘状态：已通过 AES-256-GCM 加密）</div>
+            <div class="field-label">登录密码（按需解密 · AES-256-GCM 上下文绑定加密）</div>
             <div class="field-value mono selectable">${
-              entry.password
+              hasPassword
                 ? isPwdShown
-                  ? escapeHtml(entry.password)
+                  ? escapeHtml(state.revealedSecrets.get("password"))
                   : "••••••••••••••••"
                 : "<span style='color:var(--text-muted)'>未设置密码</span>"
             }</div>
           </div>
           ${
-            entry.password
+            hasPassword
               ? `<div class="field-ops">
-                  <button type="button" class="btn btn-ghost btn-xs reveal-trigger" data-reveal-key="pwd">${isPwdShown ? "隐藏" : "显示"}</button>
-                  <button type="button" class="btn btn-primary btn-xs copy-trigger" data-copy="${escapeHtml(entry.password)}" data-secret="1">复制密码</button>
+                  <button type="button" class="btn btn-ghost btn-xs reveal-trigger" data-field-key="password">${isPwdShown ? "隐藏" : "显示"}</button>
+                  <button type="button" class="btn btn-primary btn-xs secret-copy-trigger" data-field-key="password">复制密码</button>
                 </div>`
               : ""
           }
         </div>
+        ${totpRowHtml}
         ${
           entry.phone
             ? `<div class="field-row">
@@ -675,18 +1356,43 @@
       </div>
     `;
 
+    if (showLiveTotp) {
+      if (cachedTotp && (cachedTotp.code || cachedTotp.error)) {
+        syncTotpDomElements();
+        ensureTotpInterval(entry.id);
+      } else {
+        startTotpLoop(entry.id);
+      }
+    } else {
+      stopTotpTimer();
+    }
+
     // Bind detail button actions
     $("btn-detail-fav").addEventListener("click", async () => {
-      const res = await api().toggle_favorite(entry.id);
-      if (res.ok) applyUnlockedState(res, entry.id);
+      const doToggle = async (mode = "abort") => {
+        const res = await api().toggle_favorite(entry.id, mode);
+        if (res.conflict) return openConflictModal(doToggle);
+        if (res.ok) applyUnlockedState(res, entry.id);
+        else showToast(res.error || "更新星标失败", "error");
+      };
+      await doToggle("abort");
     });
 
-    $("btn-detail-duplicate").addEventListener("click", () => {
-      openEditor(entry, true);
-      showToast("已复制当前账号内容，修改差异项后点击保存即可创建", "info");
-    });
-    $("btn-detail-edit").addEventListener("click", () => openEditor(entry, false));
+    $("btn-detail-duplicate").addEventListener("click", () => openEditorById(entry.id, true));
+    $("btn-detail-edit").addEventListener("click", () => openEditorById(entry.id, false));
     $("btn-detail-delete").addEventListener("click", () => confirmDeleteEntry(entry));
+
+    const copyTotpBtn = $("btn-copy-totp");
+    if (copyTotpBtn) {
+      copyTotpBtn.addEventListener("click", async () => {
+        const res = await api().copy_entry_totp(entry.id, 30);
+        if (res && res.ok) {
+          showToast("6 位动态验证码已复制（已屏蔽剪贴板历史，30 秒后自动清空）", "success");
+        } else {
+          showToast((res && res.error) || "复制动态码失败", "error");
+        }
+      });
+    }
 
     viewEl.querySelectorAll(".open-url-trigger").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -701,24 +1407,41 @@
     });
 
     viewEl.querySelectorAll(".reveal-trigger").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const key = btn.getAttribute("data-reveal-key");
-        if (state.revealedFields.has(key)) state.revealedFields.delete(key);
-        else state.revealedFields.add(key);
-        renderRightPane();
+      btn.addEventListener("click", async () => {
+        const key = btn.getAttribute("data-field-key");
+        if (state.revealedSecrets.has(key)) {
+          state.revealedSecrets.delete(key);
+          renderRightPane();
+          return;
+        }
+        const res = await api().reveal_entry_secret(entry.id, key);
+        if (res && res.ok) {
+          state.revealedSecrets.set(key, res.value || "");
+          renderRightPane();
+        } else {
+          showToast((res && res.error) || "解密失败", "error");
+        }
+      });
+    });
+
+    viewEl.querySelectorAll(".secret-copy-trigger").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const key = btn.getAttribute("data-field-key");
+        const res = await api().copy_entry_secret(entry.id, key, 30);
+        if (res && res.ok) {
+          showToast("敏感凭据已直接从后端复制（不经前端缓存，30 秒后自动清空）", "success");
+        } else {
+          showToast((res && res.error) || "复制失败", "error");
+        }
       });
     });
 
     viewEl.querySelectorAll(".copy-trigger").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const val = btn.getAttribute("data-copy");
-        const isSecret = btn.getAttribute("data-secret") === "1";
-        const res = await api().copy_to_clipboard(val, isSecret ? 30 : 0);
+        const res = await api().copy_to_clipboard(val, 0, false);
         if (res.ok) {
-          showToast(
-            isSecret ? "敏感信息已复制（30 秒后将自动清空剪贴板）" : "已复制到剪贴板",
-            "success"
-          );
+          showToast("已复制到剪贴板", "success");
         } else {
           showToast(res.error || "复制失败", "error");
         }
@@ -812,14 +1535,18 @@
       delBtn.title = `删除快捷标签「${tag}」`;
       delBtn.addEventListener("click", async (ev) => {
         ev.stopPropagation();
-        const res = await api().delete_saved_tag(currentCat, tag);
-        if (res.ok) {
-          state.savedTags = res.saved_tags || {};
-          renderPresetTagsBar();
-          showToast(`已删除快捷标签「${tag}」`, "info");
-        } else {
-          showToast(res.error || "删除标签失败", "error");
-        }
+        const doDelTag = async (mode = "abort") => {
+          const res = await api().delete_saved_tag(currentCat, tag, mode);
+          if (res.conflict) return openConflictModal(doDelTag);
+          if (res.ok) {
+            state.savedTags = res.saved_tags || {};
+            renderPresetTagsBar();
+            showToast(`已删除快捷标签「${tag}」`, "info");
+          } else {
+            showToast(res.error || "删除标签失败", "error");
+          }
+        };
+        await doDelTag("abort");
       });
 
       chip.appendChild(labelBtn);
@@ -828,7 +1555,7 @@
     });
   }
 
-  function openEditor(entry = null, isDuplicate = false) {
+  function openEditor(entry = null, isDuplicate = false, focusFieldId = "field-title") {
     state.mode = "edit";
     const hasSource = Boolean(entry);
     const isEdit = hasSource && !isDuplicate;
@@ -862,7 +1589,7 @@
     $("field-phone").value = hasSource ? entry.phone || "" : "";
     $("field-recovery-email").value = hasSource ? entry.recovery_email || "" : "";
     $("field-url").value = hasSource ? entry.url || "" : "";
-    $("field-2fa").value = hasSource ? entry.two_fa_recovery || "" : "";
+    $("field-2fa").value = hasSource ? entry.two_fa_recovery || entry.totp_secret || "" : "";
     $("field-notes").value = hasSource ? entry.notes || "" : "";
     $("inline-pwgen-box").classList.add("hidden");
 
@@ -872,12 +1599,60 @@
       entry.security_questions.forEach((qa) => addQaRow(qa.question, qa.answer));
     }
 
+    updateEditorTotpPreview();
     renderPresetTagsBar();
     renderRightPane();
     setTimeout(() => {
-      $("field-title").focus();
-      if (isDuplicate) $("field-title").select();
+      const targetEl = $(focusFieldId) || $("field-title");
+      if (targetEl) {
+        targetEl.focus();
+        if (isDuplicate && targetEl === $("field-title")) targetEl.select();
+      }
     }, 40);
+  }
+
+  function openNotesRiskModal(risks, onConfirmSaveAnyway) {
+    const itemsHtml = (risks || [])
+      .map((r) => {
+        if (typeof r === "string") {
+          return `<div class="risk-item"><strong>• ${escapeHtml(r)}</strong></div>`;
+        }
+        return `
+        <div class="risk-item">
+          <div><strong>• ${escapeHtml(r.label)}</strong></div>
+          <div style="color:var(--text-secondary);margin-top:2px">${escapeHtml(r.detail || "")}</div>
+        </div>`;
+      })
+      .join("");
+
+    openModal({
+      title: "⚠️ 备注栏疑似包含高敏感密钥或密码",
+      wide: true,
+      bodyHtml: `
+        <p style="font-size:13px;line-height:1.65;color:var(--text-primary)">
+          为了支持在 Obsidian / VS Code 中直接阅读说明，「<strong>备注说明</strong>」字段在本地 <code>.md</code> 文件中是<strong>明文存储</strong>的。系统检测到您在备注中填写了以下疑似敏感凭据：
+        </p>
+        <div class="risk-list">${itemsHtml}</div>
+        <p style="font-size:12.5px;color:var(--text-secondary);line-height:1.55">
+          建议将密码、私钥、助记词或恢复密钥移入上方的「<strong>登录密码</strong>」或「<strong>2FA 密钥 / 备用恢复码</strong>」字段（落盘自动执行 AES-256-GCM 加密）。
+        </p>
+      `,
+      footerButtons: [
+        {
+          label: "返回修改备注（推荐）",
+          className: "btn-primary",
+          onClick: closeModal,
+        },
+        {
+          label: "知晓风险，仍明文保存",
+          className: "btn-danger-ghost",
+          onClick: async () => {
+            closeModal();
+            await onConfirmSaveAnyway();
+          },
+        },
+      ],
+    });
   }
 
   async function submitEditorForm(ev) {
@@ -898,6 +1673,7 @@
       tags: $("field-tags").value,
       username: $("field-username").value.trim(),
       password: $("field-password").value,
+      totp_secret: "",
       phone: $("field-phone").value.trim(),
       recovery_email: $("field-recovery-email").value.trim(),
       url: $("field-url").value.trim(),
@@ -907,13 +1683,28 @@
       custom_fields: state.editingCustomFields,
     };
 
-    const res = await api().save_entry(payload);
-    if (!res.ok) {
-      showToast(res.error || "保存失败", "error");
-      return;
-    }
-    showToast("已加密保存并更新至本地 .md 文件", "success");
-    applyUnlockedState(res, res.saved_id);
+    const doSave = async (mode = "abort", allowRiskyNotes = false) => {
+      const res = await api().save_entry(payload, mode, allowRiskyNotes);
+      if (res.notes_warning) {
+        return openNotesRiskModal(res.risks, () => doSave(mode, true));
+      }
+      if (res.conflict) {
+        return openConflictModal((resolvedMode) => doSave(resolvedMode, allowRiskyNotes));
+      }
+      if (!res.ok) {
+        showToast(res.error || "保存失败", "error");
+        return;
+      }
+      showToast(
+        mode === "merge"
+          ? "已智能合并外部改动并加密保存至本地 .md 文件"
+          : "已加密保存并更新至本地 .md 文件",
+        "success"
+      );
+      applyUnlockedState(res, res.saved_id);
+    };
+
+    await doSave("abort", false);
   }
 
   function confirmDeleteEntry(entry) {
@@ -921,22 +1712,26 @@
       title: "确认删除账号",
       bodyHtml: `<p style="line-height:1.6">确定要从本地 Markdown 密码库中删除 <strong>${escapeHtml(
         entry.title
-      )}</strong> 吗？<br/><span style="font-size:12px;color:var(--text-muted)">删除前系统会自动在 .vault_backups 目录保留历史快照。</span></p>`,
+      )}</strong> 吗？<br/><span style="font-size:12px;color:var(--text-muted)">删除前系统会自动在 .vault_backups 目录保留分层历史快照。</span></p>`,
       footerButtons: [
         { label: "取消", className: "btn-ghost", onClick: closeModal },
         {
           label: "确认删除",
           className: "btn-danger",
           onClick: async () => {
-            const res = await api().delete_entry(entry.id);
             closeModal();
-            if (res.ok) {
-              showToast("账号记录已删除", "info");
-              state.selectedId = null;
-              applyUnlockedState(res);
-            } else {
-              showToast(res.error || "删除失败", "error");
-            }
+            const doDelete = async (mode = "abort") => {
+              const res = await api().delete_entry(entry.id, mode);
+              if (res.conflict) return openConflictModal(doDelete);
+              if (res.ok) {
+                showToast("账号记录已删除", "info");
+                state.selectedId = null;
+                applyUnlockedState(res);
+              } else {
+                showToast(res.error || "删除失败", "error");
+              }
+            };
+            await doDelete("abort");
           },
         },
       ],
@@ -961,19 +1756,23 @@
           onClick: async () => {
             const name = $("modal-cat-name").value.trim();
             if (!name) return showToast("请输入分类名称", "error");
-            const res = await api().add_category(name);
-            if (!res.ok) return showToast(res.error, "error");
-            closeModal();
-            showToast(`已添加分类「${name}」`, "success");
-            if (onCreatedCallback) {
-              state.categories = res.categories || [];
-              onCreatedCallback(name);
-              renderSidebar();
-            } else {
-              state.filterType = "category";
-              state.filterCategory = name;
-              applyUnlockedState(res, state.selectedId);
-            }
+            const doAddCat = async (mode = "abort") => {
+              const res = await api().add_category(name, mode);
+              if (res.conflict) return openConflictModal(doAddCat);
+              if (!res.ok) return showToast(res.error, "error");
+              closeModal();
+              showToast(`已添加分类「${name}」`, "success");
+              if (onCreatedCallback) {
+                state.categories = res.categories || [];
+                onCreatedCallback(name);
+                renderSidebar();
+              } else {
+                state.filterType = "category";
+                state.filterCategory = name;
+                applyUnlockedState(res, state.selectedId);
+              }
+            };
+            await doAddCat("abort");
           },
         },
       ],
@@ -998,14 +1797,18 @@
           onClick: async () => {
             const newName = $("modal-rename-cat").value.trim();
             if (!newName) return showToast("分类名称不能为空", "error");
-            const res = await api().rename_category(oldName, newName);
-            if (!res.ok) return showToast(res.error, "error");
-            closeModal();
-            if (state.filterType === "category" && state.filterCategory === oldName) {
-              state.filterCategory = newName;
-            }
-            showToast("分类已重命名", "success");
-            applyUnlockedState(res, state.selectedId);
+            const doRename = async (mode = "abort") => {
+              const res = await api().rename_category(oldName, newName, mode);
+              if (res.conflict) return openConflictModal(doRename);
+              if (!res.ok) return showToast(res.error, "error");
+              closeModal();
+              if (state.filterType === "category" && state.filterCategory === oldName) {
+                state.filterCategory = newName;
+              }
+              showToast("分类已重命名", "success");
+              applyUnlockedState(res, state.selectedId);
+            };
+            await doRename("abort");
           },
         },
       ],
@@ -1027,18 +1830,22 @@
           label: "确认移除",
           className: "btn-danger",
           onClick: async () => {
-            const res = await api().delete_category(catName, "未分类");
             closeModal();
-            if (res.ok) {
-              if (state.filterType === "category" && state.filterCategory === catName) {
-                state.filterType = "all";
-                state.filterCategory = "";
+            const doDelCat = async (mode = "abort") => {
+              const res = await api().delete_category(catName, "未分类", mode);
+              if (res.conflict) return openConflictModal(doDelCat);
+              if (res.ok) {
+                if (state.filterType === "category" && state.filterCategory === catName) {
+                  state.filterType = "all";
+                  state.filterCategory = "";
+                }
+                showToast(`分类「${catName}」已移除`, "info");
+                applyUnlockedState(res, state.selectedId);
+              } else {
+                showToast(res.error || "操作失败", "error");
               }
-              showToast(`分类「${catName}」已移除`, "info");
-              applyUnlockedState(res, state.selectedId);
-            } else {
-              showToast(res.error || "操作失败", "error");
-            }
+            };
+            await doDelCat("abort");
           },
         },
       ],
@@ -1075,8 +1882,8 @@
           className: "btn-primary",
           onClick: async () => {
             const val = $("modal-pw-output").textContent;
-            await api().copy_to_clipboard(val, 30);
-            showToast("强密码已复制（30 秒后自动清空剪贴板）", "success");
+            await api().copy_to_clipboard(val, 30, true);
+            showToast("强密码已复制（已屏蔽剪贴板历史，30 秒后自动清空）", "success");
           },
         },
       ],
@@ -1107,7 +1914,7 @@
       title: "🔑 修改主密码",
       bodyHtml: `
         <p style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px;line-height:1.5">
-          修改主密码将重新生成随机盐值 (Salt)，并对全库所有密码、密保答案与恢复码重新执行 AES-256-GCM 加密。
+          修改主密码将重新生成随机盐值 (Salt)，并对全库所有密码、TOTP 密钥、密保答案与恢复码重新执行 AES-256-GCM 上下文绑定加密。
         </p>
         <div class="form-group">
           <label>当前主密码</label>
@@ -1115,7 +1922,11 @@
         </div>
         <div class="form-group">
           <label>新主密码</label>
-          <input type="password" id="mpw-new" placeholder="输入新主密码（至少 4 位）" />
+          <input type="password" id="mpw-new" placeholder="输入新主密码（至少 8 位字符）" />
+          <div id="mpw-pwd-meter" class="pwd-meter-wrap hidden">
+            <div class="pwd-meter-track"><div id="mpw-pwd-fill" class="pwd-meter-fill"></div></div>
+            <div id="mpw-pwd-hint" class="pwd-meter-hint"></div>
+          </div>
         </div>
         <div class="form-group">
           <label>确认新主密码</label>
@@ -1132,16 +1943,291 @@
             const newP = $("mpw-new").value;
             const cfmP = $("mpw-confirm").value;
             if (!oldP || !newP) return showToast("请填写完整密码信息", "error");
+            if (newP.length < 8) return showToast("新主密码长度至少需要 8 个字符", "error");
             if (newP !== cfmP) return showToast("两次输入的新主密码不一致", "error");
-            const res = await api().change_master_password(oldP, newP);
-            if (!res.ok) return showToast(res.error || "修改失败", "error");
-            closeModal();
-            showToast("主密码已更新，全库敏感数据已完成重加密！", "success");
-            applyUnlockedState(res, state.selectedId);
+            const doRotate = async (mode = "abort") => {
+              const res = await api().change_master_password(oldP, newP, mode);
+              if (res.conflict) return openConflictModal(doRotate);
+              if (!res.ok) return showToast(res.error || "修改失败", "error");
+              closeModal();
+              showToast("主密码已更新，全库敏感数据已完成重加密！", "success");
+              applyUnlockedState(res, state.selectedId);
+            };
+            await doRotate("abort");
           },
         },
       ],
     });
+
+    const mpwNewEl = $("mpw-new");
+    if (mpwNewEl) {
+      mpwNewEl.addEventListener("input", () => {
+        updateStrengthMeter(mpwNewEl.value, "mpw-pwd-meter", "mpw-pwd-fill", "mpw-pwd-hint");
+      });
+    }
+  }
+
+  function openAutoLockModal() {
+    const presets = [
+      { value: 0, label: "关闭闲置自动锁定" },
+      { value: 1, label: "闲置 1 分钟后自动锁定" },
+      { value: 5, label: "闲置 5 分钟后自动锁定" },
+      { value: 15, label: "闲置 15 分钟后自动锁定（推荐）" },
+      { value: 30, label: "闲置 30 分钟后自动锁定" },
+      { value: 60, label: "闲置 1 小时后自动锁定" },
+      { value: 120, label: "闲置 2 小时后自动锁定" },
+    ];
+    const curMins = Number(state.autoLockMinutes) || 0;
+    const hasPreset = presets.some((p) => p.value === curMins);
+    const optionsHtml = [
+      ...presets,
+      ...(hasPreset ? [] : [{ value: curMins, label: `闲置 ${curMins} 分钟后自动锁定` }]),
+    ]
+      .map(
+        (opt) =>
+          `<option value="${opt.value}" ${opt.value === curMins ? "selected" : ""}>${escapeHtml(
+            opt.label
+          )}</option>`
+      )
+      .join("");
+
+    openModal({
+      title: "🔒 自动锁定安全策略",
+      bodyHtml: `
+        <p style="font-size:12.5px;color:var(--text-secondary);margin-bottom:14px;line-height:1.55">
+          自动锁定触发时，应用会立即清除内存中的派生密钥与明文凭据，并清空编辑区输入项（包括电脑休眠唤醒超时场景）。
+        </p>
+        <div class="form-group">
+          <label for="modal-autolock-minutes">闲置超时锁定时间</label>
+          <select id="modal-autolock-minutes">${optionsHtml}</select>
+        </div>
+        <label class="checkbox-row" style="margin-top:12px;margin-bottom:0">
+          <input type="checkbox" id="modal-lock-minimize" ${state.lockOnMinimize ? "checked" : ""} />
+          <span>窗口最小化或切入后台隐藏时立即锁定密码库</span>
+        </label>
+      `,
+      footerButtons: [
+        { label: "取消", className: "btn-ghost", onClick: closeModal },
+        {
+          label: "保存设置",
+          className: "btn-primary",
+          onClick: async () => {
+            const mins = parseInt($("modal-autolock-minutes").value, 10) || 0;
+            const minLock = $("modal-lock-minimize").checked;
+            const res = await api().set_auto_lock_prefs(mins, minLock);
+            if (!res.ok) return showToast(res.error || "保存失败", "error");
+            state.autoLockMinutes = res.auto_lock_minutes;
+            state.lockOnMinimize = res.lock_on_minimize;
+            state.lastActivityAt = Date.now();
+            syncAutoLockLabel();
+            closeModal();
+            showToast("自动锁定策略已更新", "success");
+          },
+        },
+      ],
+    });
+  }
+
+  async function openBackupHistoryModal() {
+    openModal({
+      title: "🕘 分层历史快照与恢复",
+      wide: true,
+      bodyHtml: `<p style="font-size:13px;color:var(--text-muted)">正在读取 <code>.vault_backups</code> 历史快照列表...</p>`,
+      footerButtons: [{ label: "关闭", className: "btn-ghost", onClick: closeModal }],
+    });
+
+    const res = await api().list_backups();
+    if ($("modal-overlay").classList.contains("hidden")) return;
+
+    if (!res || !res.ok) {
+      openModal({
+        title: "🕘 分层历史快照与恢复",
+        wide: true,
+        bodyHtml: `<div class="form-error">${escapeHtml((res && res.error) || "读取快照列表失败")}</div>`,
+        footerButtons: [{ label: "关闭", className: "btn-ghost", onClick: closeModal }],
+      });
+      return;
+    }
+
+    const backups = res.backups || [];
+    const listHtml =
+      backups.length === 0
+        ? `<div style="padding:18px;text-align:center;color:var(--text-muted);font-size:13px">当前暂无历史快照（每次修改保存时将自动生成分层备份）</div>`
+        : `<div class="backup-list">${backups
+            .map((b) => {
+              const kb = Math.max(0.1, (Number(b.size_bytes) || 0) / 1024).toFixed(1);
+              const cntText =
+                typeof b.entry_count === "number" ? `${b.entry_count} 条记录 · ` : "";
+              return `
+                <div class="backup-item">
+                  <div class="backup-item-main">
+                    <div class="backup-item-time">${escapeHtml(b.created_at)}</div>
+                    <div class="backup-item-sub">${cntText}${kb} KB · ${escapeHtml(b.filename)}</div>
+                  </div>
+                  <button type="button" class="btn btn-ghost btn-xs btn-restore-snap" data-fn="${escapeHtml(
+                    b.filename
+                  )}" data-time="${escapeHtml(b.created_at)}">恢复此版本</button>
+                </div>
+              `;
+            })
+            .join("")}</div>`;
+
+    openModal({
+      title: "🕘 分层历史快照与恢复",
+      wide: true,
+      bodyHtml: `
+        <p style="font-size:12.5px;color:var(--text-secondary);line-height:1.55">
+          系统采用分层保留策略（自动保留最近 10 次修改 + 24 小时每小时 + 30 天每日 + 12 周每周快照）。恢复任意历史版本前，会自动将当前文件备份一份，确保随时可逆。
+        </p>
+        ${listHtml}
+      `,
+      footerButtons: [{ label: "关闭", className: "btn-ghost", onClick: closeModal }],
+    });
+
+    document.querySelectorAll(".btn-restore-snap").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const fn = btn.getAttribute("data-fn");
+        const snapTime = btn.getAttribute("data-time");
+        openModal({
+          title: "确认恢复历史快照",
+          bodyHtml: `
+            <p style="font-size:13px;line-height:1.65">
+              确定要将当前密码库恢复至 <strong>${escapeHtml(snapTime)}</strong> 的快照版本吗？<br/>
+              <span style="font-size:12px;color:var(--text-muted)">恢复前系统会先将您当前的 .md 文件自动存入 .vault_backups 快照中，不会丢失现有数据。</span>
+            </p>
+          `,
+          footerButtons: [
+            {
+              label: "返回列表",
+              className: "btn-ghost",
+              onClick: () => openBackupHistoryModal(),
+            },
+            {
+              label: "确认恢复",
+              className: "btn-primary",
+              onClick: async () => {
+                const r = await api().restore_backup(fn);
+                closeModal();
+                if (!r || !r.ok) {
+                  showToast((r && r.error) || "恢复快照失败", "error");
+                  return;
+                }
+                if (r.requires_unlock) {
+                  stopTotpTimer();
+                  state.entries = [];
+                  state.revealedSecrets.clear();
+                  state.healthReport = null;
+                  renderAuthStatus(r);
+                  showToast("历史快照已恢复，该快照使用历史主密码加密，请重新输入主密码解锁", "info");
+                } else {
+                  showToast(`已成功恢复至 ${snapTime} 的快照版本`, "success");
+                  applyUnlockedState(r);
+                }
+              },
+            },
+          ],
+        });
+      });
+    });
+  }
+
+  function openImportExportModal() {
+    openModal({
+      title: "📥 批量导入与安全导出",
+      wide: true,
+      bodyHtml: `
+        <div class="ie-section-card">
+          <div class="ie-section-title">📥 从浏览器或其他密码管家导入 CSV</div>
+          <p style="font-size:12.5px;color:var(--text-secondary);line-height:1.55;margin-bottom:10px">
+            自动识别 <strong>Chrome / Edge / Firefox / Bitwarden / 1Password</strong> 导出的 CSV 表头，自动跳过库内重复项，并将所有密码与 TOTP 种子使用当前主密码加密后持久化至 <code>.md</code>。
+          </p>
+          <div class="form-group" style="margin-bottom:10px">
+            <label for="ie-import-cat">默认归入分类（若 CSV 自带文件夹/分组列则优先保留原分组）</label>
+            <input type="text" id="ie-import-cat" value="外部导入" placeholder="例如：外部导入 / 浏览器迁入" />
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="btn-ie-do-import">选择 CSV 文件并加密导入...</button>
+        </div>
+
+        <div class="ie-section-card" style="margin-bottom:0">
+          <div class="ie-section-title">📤 导出当前密码库备份</div>
+          <p style="font-size:12.5px;color:var(--text-secondary);line-height:1.55;margin-bottom:10px">
+            日常跨设备同步或冷备推荐导出「<strong>加密 Markdown (.md)</strong>」；如需迁移至其他软件，须再次验证主密码后方可导出「<strong>明文 CSV</strong>」（导出后请妥善粉碎明文文件）。
+          </p>
+          <div style="margin-bottom:12px">
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-ie-export-md">🔒 导出加密 Markdown 备份 (.md)</button>
+          </div>
+          <div class="form-group" style="margin-bottom:8px">
+            <label for="ie-export-mpw">导出明文 CSV 二次身份校验（输入当前主密码）</label>
+            <div class="category-select-row">
+              <input type="password" id="ie-export-mpw" placeholder="输入主密码以解锁明文 CSV 导出..." autocomplete="off" />
+              <button type="button" class="btn btn-danger-ghost btn-sm" id="btn-ie-export-csv">导出明文 CSV</button>
+            </div>
+          </div>
+        </div>
+      `,
+      footerButtons: [{ label: "关闭", className: "btn-ghost", onClick: closeModal }],
+    });
+
+    const importBtn = $("btn-ie-do-import");
+    if (importBtn) {
+      importBtn.addEventListener("click", async () => {
+        const defaultCat = ($("ie-import-cat").value || "外部导入").trim() || "外部导入";
+        const doImport = async (mode = "abort") => {
+          const res = await api().import_csv_file(defaultCat, mode);
+          if (!res || res.cancelled) return;
+          if (res.conflict) return openConflictModal(doImport);
+          if (!res.ok) {
+            showToast(res.error || "导入 CSV 失败", "error");
+            return;
+          }
+          closeModal();
+          showToast(
+            `成功从 ${res.detected_source || "CSV"} 加密导入 ${res.imported_count} 条账号（跳过重复 ${res.skipped_duplicates || 0} 条）`,
+            "success"
+          );
+          applyUnlockedState(res);
+        };
+        await doImport("abort");
+      });
+    }
+
+    const exportMdBtn = $("btn-ie-export-md");
+    if (exportMdBtn) {
+      exportMdBtn.addEventListener("click", async () => {
+        const res = await api().export_vault_file("encrypted_md", "");
+        if (!res || res.cancelled) return;
+        if (res.ok) {
+          closeModal();
+          showToast(`加密 Markdown 备份已导出（共 ${res.entry_count} 条记录）`, "success");
+        } else {
+          showToast(res.error || "导出失败", "error");
+        }
+      });
+    }
+
+    const exportCsvBtn = $("btn-ie-export-csv");
+    if (exportCsvBtn) {
+      exportCsvBtn.addEventListener("click", async () => {
+        const mpw = $("ie-export-mpw").value;
+        if (!mpw) {
+          showToast("请先输入当前主密码进行安全验证", "error");
+          $("ie-export-mpw").focus();
+          return;
+        }
+        const res = await api().export_vault_file("plaintext_csv", mpw);
+        if (!res || res.cancelled) return;
+        if (res.ok) {
+          $("ie-export-mpw").value = "";
+          closeModal();
+          showToast(
+            `已导出 ${res.entry_count} 条记录至明文 CSV，使用完毕后请及时彻底删除该 CSV 文件`,
+            "info"
+          );
+        } else {
+          showToast(res.error || "验证或导出失败", "error");
+        }
+      });
+    }
   }
 
   function openSwitchVaultModal() {
@@ -1421,6 +2507,18 @@
       }
     });
 
+    // Live strength meter on create vault master password
+    if ($("create-password")) {
+      $("create-password").addEventListener("input", () => {
+        updateStrengthMeter(
+          $("create-password").value,
+          "create-pwd-meter",
+          "create-pwd-fill",
+          "create-pwd-hint"
+        );
+      });
+    }
+
     // Create vault submit
     $("create-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -1429,8 +2527,8 @@
       const p2 = $("create-password-confirm").value;
       const useTpl = $("create-use-template").checked;
 
-      if (p1.length < 4) {
-        $("create-error").textContent = "主密码长度至少需要 4 位字符";
+      if (p1.length < 8) {
+        $("create-error").textContent = "主密码长度至少需要 8 个字符";
         $("create-error").classList.remove("hidden");
         return;
       }
@@ -1496,6 +2594,24 @@
       closeSettingsPopover();
       openSwitchVaultModal();
     });
+    if ($("btn-import-export")) {
+      $("btn-import-export").addEventListener("click", () => {
+        closeSettingsPopover();
+        openImportExportModal();
+      });
+    }
+    if ($("btn-backup-history")) {
+      $("btn-backup-history").addEventListener("click", () => {
+        closeSettingsPopover();
+        openBackupHistoryModal();
+      });
+    }
+    if ($("btn-auto-lock")) {
+      $("btn-auto-lock").addEventListener("click", () => {
+        closeSettingsPopover();
+        openAutoLockModal();
+      });
+    }
     $("btn-change-mpw").addEventListener("click", () => {
       closeSettingsPopover();
       openChangeMasterPasswordModal();
@@ -1520,12 +2636,7 @@
     }
 
     $("btn-lock-vault").addEventListener("click", async () => {
-      closeSettingsPopover();
-      const status = await api().lock_vault();
-      state.entries = [];
-      state.revealedFields.clear();
-      renderAuthStatus(status);
-      showToast("密码库已安全锁定", "info");
+      await lockWorkspaceWithReason("密码库已安全锁定");
     });
 
     // Left Sidebar Quick Filters
@@ -1534,6 +2645,9 @@
         state.filterType = li.getAttribute("data-filter-type");
         state.filterCategory = "";
         state.filterTag = "";
+        if (state.mode === "edit") state.mode = "view";
+        state.revealedSecrets.clear();
+        stopTotpTimer();
         const filtered = getFilteredEntries();
         if (!filtered.some((e) => e.id === state.selectedId)) {
           state.selectedId = filtered.length ? filtered[0].id : null;
@@ -1582,15 +2696,21 @@
         const currentCat = ($("field-category").value || "未分类").trim();
         const tags = parseTagsInput();
         if (tags.length === 0) return;
-        let lastRes = null;
-        for (const t of tags) {
-          lastRes = await api().add_saved_tag(currentCat, t);
-        }
-        if (lastRes && lastRes.ok) {
-          state.savedTags = lastRes.saved_tags || {};
-          renderPresetTagsBar();
-          showToast("已将输入标签保存至当前分类快捷标签", "success");
-        }
+        const doSaveQuickTags = async (mode = "abort") => {
+          let lastRes = null;
+          for (const t of tags) {
+            lastRes = await api().add_saved_tag(currentCat, t, mode);
+            if (lastRes && lastRes.conflict) {
+              return openConflictModal(doSaveQuickTags);
+            }
+          }
+          if (lastRes && lastRes.ok) {
+            state.savedTags = lastRes.saved_tags || {};
+            renderPresetTagsBar();
+            showToast("已将输入标签保存至当前分类快捷标签", "success");
+          }
+        };
+        await doSaveQuickTags("abort");
       }
     });
 
@@ -1624,6 +2744,10 @@
       $("inline-pw-len-val").textContent = $("inline-pw-len").value;
     });
     $("btn-inline-pw-refresh").addEventListener("click", fillInlineGeneratedPassword);
+
+    if ($("field-2fa")) {
+      $("field-2fa").addEventListener("input", () => updateEditorTotpPreview());
+    }
 
     // Security QA helpers
     $("btn-add-qa-row").addEventListener("click", () => addQaRow("", ""));
@@ -1681,7 +2805,49 @@
         $("entry-editor").requestSubmit();
       }
     });
+
+    // Idle & Minimize Auto-Lock Activity Tracking
+    ["mousemove", "mousedown", "keydown", "wheel", "touchstart"].forEach((evtName) => {
+      document.addEventListener(evtName, touchActivity, { passive: true });
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        if (state.lockOnMinimize && isWorkspaceUnlocked()) {
+          lockWorkspaceWithReason("窗口隐藏或最小化，密码库已自动安全锁定");
+        }
+      } else {
+        checkIdleAutoLock();
+      }
+    });
+
+    window.addEventListener("focus", () => {
+      checkIdleAutoLock();
+    });
+
+    setInterval(checkIdleAutoLock, 5000);
   }
+
+  // Backend auto-lock hook (e.g. native OS window minimized event)
+  window.onBackendAutoLocked = async function (reason) {
+    if (state.lockingInProgress) return;
+    stopTotpTimer();
+    closeModal();
+    closeSettingsPopover();
+    clearSensitiveDomInputs();
+    state.entries = [];
+    state.revealedSecrets.clear();
+    state.healthReport = null;
+    state.mode = "view";
+    try {
+      const status = await api().get_status();
+      renderAuthStatus(status);
+    } catch (_) {
+      $("auth-screen").classList.remove("hidden");
+      $("app-workspace").classList.add("hidden");
+    }
+    if (reason) showToast(reason, "info");
+  };
 
   // External file modification hook invoked from Python FileWatcher
   window.onExternalVaultChanged = function () {

@@ -69,10 +69,14 @@
           <input type="text" id="create-vault-name" value="我的账号密码库" placeholder="例如：个人账号密码总库" />
         </div>
         <div class="form-group">
-          <label for="create-password">设置主密码（用于加密密码与密保答案）</label>
+          <label for="create-password">设置主密码（用于加密密码、TOTP 与密保答案）</label>
           <div class="input-with-action">
-            <input type="password" id="create-password" placeholder="至少 4 位字符，建议设置好记的强主密码" autocomplete="off" />
+            <input type="password" id="create-password" placeholder="至少 8 位字符，建议包含大小写字母、数字与符号" autocomplete="off" />
             <button type="button" class="icon-btn toggle-pwd-btn" data-target="create-password" title="显示/隐藏">👁</button>
+          </div>
+          <div id="create-pwd-meter" class="pwd-meter-wrap hidden">
+            <div class="pwd-meter-track"><div id="create-pwd-fill" class="pwd-meter-fill"></div></div>
+            <div id="create-pwd-hint" class="pwd-meter-hint"></div>
           </div>
         </div>
         <div class="form-group">
@@ -139,6 +143,10 @@
                 <span class="nav-label">⭐ 星标常用</span>
                 <span class="nav-count" id="count-fav">0</span>
               </li>
+              <li class="nav-item" data-filter-type="health">
+                <span class="nav-label">🛡 安全体检</span>
+                <span class="nav-count hidden" id="count-health">0</span>
+              </li>
             </ul>
           </div>
 
@@ -166,6 +174,21 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
               <span class="settings-item-label">切换密码库</span>
               <span class="settings-item-meta">.md</span>
+            </button>
+            <button type="button" class="settings-menu-item" id="btn-import-export">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span class="settings-item-label">导入 / 导出</span>
+              <span class="settings-item-meta">CSV/MD</span>
+            </button>
+            <button type="button" class="settings-menu-item" id="btn-backup-history">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              <span class="settings-item-label">历史快照恢复</span>
+              <span class="settings-item-meta">备份</span>
+            </button>
+            <button type="button" class="settings-menu-item" id="btn-auto-lock">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <span class="settings-item-label">自动锁定</span>
+              <span class="settings-item-meta" id="settings-autolock-label">15 分钟</span>
             </button>
             <button type="button" class="settings-menu-item" id="btn-change-mpw">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
@@ -228,6 +251,9 @@
 
         <!-- Account Read View -->
         <div id="detail-view" class="detail-content hidden"></div>
+
+        <!-- Password Security Health Audit View -->
+        <div id="health-view" class="detail-content hidden"></div>
 
         <!-- Account Create / Edit Form View -->
         <form id="entry-editor" class="detail-editor hidden">
@@ -316,7 +342,7 @@
             </div>
 
             <div class="form-section-divider">
-              <span>密保问答与 2FA 恢复码（答案与恢复码落盘自动加密）</span>
+              <span>密保问答与双重认证 2FA（答案与密钥落盘自动加密）</span>
               <div class="divider-actions">
                 <button type="button" class="link-btn" id="btn-fill-apple-qa">填入常用密保三问模板</button>
                 <span class="dot-sep">·</span>
@@ -327,8 +353,9 @@
             <div id="qa-rows-container" class="qa-rows-container"></div>
 
             <div class="form-group">
-              <label for="field-2fa">2FA 密钥 / 备用恢复码（支持多行，加密存储）</label>
-              <textarea id="field-2fa" rows="2" placeholder="如：双重认证恢复密钥、平台备用验证码或 TOTP 密钥种子..."></textarea>
+              <label for="field-2fa">⏱ 2FA 动态码密钥 / 备用恢复码（加密存储 · 填入 Base32 密钥或 otpauth:// 自动实时生成 6 位验证码）</label>
+              <textarea id="field-2fa" rows="2" placeholder="填入平台 2FA 密钥种子（如 JBSWY3DPEHPK3PXP 或 otpauth://... 链接，详情页将实时展示 6 位动态口令），或填写一次性备用恢复码"></textarea>
+              <div id="totp-editor-preview" class="pwd-meter-hint hidden"></div>
             </div>
 
             <div class="form-group">

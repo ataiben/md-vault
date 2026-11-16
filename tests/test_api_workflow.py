@@ -41,8 +41,17 @@ def test_full_api_lifecycle_and_master_password_rotation(tmp_path: Path):
     good_unlock = api.unlock_vault("NewMaster#456")
     assert good_unlock["ok"] is True
     hk_item = next(e for e in good_unlock["entries"] if e["username"] == "hk_apple@icloud.com")
-    assert hk_item["password"] == "HK_Secret_Password!"
-    assert hk_item["security_questions"][0]["answer"] == "HongKong"
+    # List payload redacts secrets by default (lazy decryption)
+    assert hk_item["password"] == ""
+    assert hk_item["has_password"] is True
+    assert hk_item["security_questions"][0]["answer"] == ""
+    assert hk_item["security_questions"][0]["has_answer"] is True
+
+    # On-demand decryption returns exact plaintext values
+    edit_res = api.get_entry_for_edit(hk_item["id"])
+    assert edit_res["ok"] is True
+    assert edit_res["entry"]["password"] == "HK_Secret_Password!"
+    assert edit_res["entry"]["security_questions"][0]["answer"] == "HongKong"
 
     # Verify rolling backup was created
     backup_dir = vault_file.parent / ".vault_backups"

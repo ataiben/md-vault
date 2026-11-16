@@ -1344,6 +1344,44 @@ textarea {
   box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
+.modal-card.wide {
+  max-width: 540px;
+}
+
+.backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 290px;
+  overflow-y: auto;
+  margin-top: 10px;
+  padding-right: 4px;
+}
+.backup-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.backup-item-main {
+  min-width: 0;
+  flex: 1;
+}
+.backup-item-time {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.backup-item-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  word-break: break-all;
+}
 
 .modal-header {
   padding: 15px 20px;
@@ -1421,4 +1459,196 @@ textarea {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* ==================== PASSWORD STRENGTH METER ==================== */
+.pwd-meter-wrap {
+  margin-top: 7px;
+}
+.pwd-meter-track {
+  height: 5px;
+  background: var(--bg-elevated);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+.pwd-meter-fill {
+  height: 100%;
+  width: 0%;
+  transition: width 0.2s ease, background-color 0.2s ease;
+  border-radius: 999px;
+}
+.pwd-meter-hint {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ==================== LIVE TOTP WIDGET ==================== */
+.totp-live-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 3px;
+}
+.totp-code-display {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--accent);
+}
+.totp-code-display.expiring {
+  color: var(--danger);
+}
+.totp-countdown-pill {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.totp-countdown-pill.expiring {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.totp-progress-track {
+  margin-top: 6px;
+  height: 3px;
+  width: 180px;
+  max-width: 100%;
+  background: var(--bg-elevated);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.totp-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.35s linear, background-color 0.2s ease;
+}
+.totp-progress-fill.expiring {
+  background: var(--danger);
+}
+
+/* ==================== PASSWORD HEALTH AUDIT VIEW ==================== */
+.nav-count.warn {
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 600;
+}
+.health-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+}
+.health-score-box {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.health-score-num {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1;
+}
+.health-score-unit {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.health-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.health-stat-card {
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.health-stat-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.health-stat-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+.health-issue-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.health-issue-main {
+  min-width: 0;
+  flex: 1;
+}
+.health-issue-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.health-issue-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.health-cluster-box {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.health-cluster-badge {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--danger-soft);
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-bottom: 8px;
+}
+
+/* ==================== IMPORT / EXPORT & NOTES RISK MODAL ==================== */
+.ie-section-card {
+  padding: 13px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+}
+.ie-section-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.risk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+.risk-item {
+  padding: 9px 12px;
+  background: var(--danger-soft);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
